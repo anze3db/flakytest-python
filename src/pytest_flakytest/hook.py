@@ -40,14 +40,16 @@
 #  │ └── pytest_terminal_summary
 #  └── pytest_unconfigure
 
-def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    # Add a section?
-    ...
+# def pytest_terminal_summary(terminalreporter, exitstatus, config):
+#     # Add a section?
+#     ...
 
-def pytest_collection_finish(session):
-    # Send report start here?
-    ...
 
-def pytest_sessionfinish(session, exitstatus):
-    # Send report end here?
-    ...
+# def pytest_collection_finish(session):
+#     # Send report start here?
+#     ...
+
+
+# def pytest_sessionfinish(session, exitstatus):
+#     # Send report end here?
+#     ...
