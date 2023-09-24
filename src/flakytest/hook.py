@@ -49,6 +49,7 @@ import os
 import traceback
 
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
+host = os.environ.get("FLAKYTEST_HOST", "flakytest.com")
 
 muted_tests = []
 tests = []
@@ -71,7 +72,7 @@ def pytest_collection_finish(session):
         return
 
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    conn = http.client.HTTPConnection("localhost", 8001)
+    conn = http.client.HTTPConnection(host)
     conn.request("POST", "/sessions/", headers=headers)
     session.stash["session_id"] = conn.getresponse().read().decode()
 
@@ -84,7 +85,7 @@ def pytest_sessionfinish(session, exitstatus):
         {"tests": tests + muted_tests, "exit_status": exitstatus.name if exitstatus != 0 else "OK"}
     ).encode()
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    conn = http.client.HTTPConnection("localhost", 8001)
+    conn = http.client.HTTPConnection(host)
     conn.request("POST", f"/sessions/{session.stash['session_id']}/finish", json_data, headers)
 
 
