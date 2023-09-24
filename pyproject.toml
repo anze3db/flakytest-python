@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pytest-flakytest"
+name = "flakytest"
 dynamic = ["version"]
 description = 'Pytest plugin for flakytest.com'
 readme = "README.md"
@@ -26,21 +26,27 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Natural Language :: English",
   "Framework :: Pytest",
 ]
 dependencies = []
 
 [project.urls]
-Documentation = "https://github.com/unknown/pytest-flakytest#readme"
-Issues = "https://github.com/unknown/pytest-flakytest/issues"
-Source = "https://github.com/unknown/pytest-flakytest"
+Documentation = "https://github.com/anze3db/flakytest-python#readme"
+Changelog = "https://github.com/anze3db/flakytest-python/blob/main/CHANGELOG.md"
+Issues = "https://github.com/anze3db/flakytest-python/issues"
+Source = "https://github.com/anze3db/flakytest-python"
+Mastodon = "https://fosstodon.org/@anze3db"
+Twitter = "https://twitter.com/anze3db"
 
 [project.entry-points.pytest11]
-pytest_flakytest = "pytest_flakytest.hook"
+flakytest = "flakytest.hook"
 
 
 [tool.hatch.version]
-path = "src/pytest_flakytest/__about__.py"
+path = "src/flakytest/__about__.py"
 
 [tool.hatch.envs.default]
 dependencies = [
@@ -60,23 +66,22 @@ cov = [
 ]
 
 [[tool.hatch.envs.all.matrix]]
-python = ["3.7", "3.8", "3.9", "3.10", "3.11"]
+python = ["3.8", "3.9", "3.10", "3.11"]
 
 [tool.hatch.envs.lint]
 detached = true
 dependencies = [
-  "black>=23.1.0",
   "mypy>=1.0.0",
-  "ruff>=0.0.243",
+  "ruff>=0.0.290",
 ]
 [tool.hatch.envs.lint.scripts]
-typing = "mypy --install-types --non-interactive {args:src/pytest_flakytest tests}"
+typing = "mypy --install-types --non-interactive {args:src/flakytest tests}"
 style = [
   "ruff {args:.}",
-  "black --check --diff {args:.}",
+  "ruff format --check --diff {args:.}",
 ]
 fmt = [
-  "black {args:.}",
+  "ruff format {args:.}",
   "ruff --fix {args:.}",
   "style",
 ]
@@ -84,11 +89,6 @@ all = [
   "style",
   "typing",
 ]
-
-[tool.black]
-target-version = ["py37"]
-line-length = 120
-skip-string-normalization = true
 
 [tool.ruff]
 target-version = "py37"
@@ -139,7 +139,7 @@ unfixable = [
 ]
 
 [tool.ruff.isort]
-known-first-party = ["pytest_flakytest"]
+known-first-party = ["flakytest"]
 
 [tool.ruff.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -149,16 +149,16 @@ ban-relative-imports = "all"
 "tests/**/*" = ["PLR2004", "S101", "TID252"]
 
 [tool.coverage.run]
-source_pkgs = ["pytest_flakytest", "tests"]
+source_pkgs = ["flakytest", "tests"]
 branch = true
 parallel = true
 omit = [
-  "src/pytest_flakytest/__about__.py",
+  "src/flakytest/__about__.py",
 ]
 
 [tool.coverage.paths]
-pytest_flakytest = ["src/pytest_flakytest", "*/pytest-flakytest/src/pytest_flakytest"]
-tests = ["tests", "*/pytest-flakytest/tests"]
+flakytest = ["src/flakytest", "*/flakytest/src/flakytest"]
+tests = ["tests", "*/flakytest/tests"]
 
 [tool.coverage.report]
 exclude_lines = [

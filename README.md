@@ -1,7 +1,7 @@
-# pytest-flakytest
+# flakytest-python
 
-[![PyPI - Version](https://img.shields.io/pypi/v/pytest-flakytest.svg)](https://pypi.org/project/pytest-flakytest)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pytest-flakytest.svg)](https://pypi.org/project/pytest-flakytest)
+[![PyPI - Version](https://img.shields.io/pypi/v/flakytest.svg)](https://pypi.org/project/flakytest)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/flakytest.svg)](https://pypi.org/project/flakytest)
 
 -----
 
@@ -13,9 +13,21 @@
 ## Installation
 
 ```console
-pip install pytest-flakytest
+pip install flakytest --pre
+```
+
+Obtain the `FLAKYTEST_SECRET_TOKEN` from flakytest.com and set it as an environment variable (e.g. your secrets store in your CI/CD pipeline)
+
+```console
+export FLAKYTEST_SECRET_TOKEN=****************************
+```
+
+Run your tests with `pytest` normally
+
+```console
+pytest
 ```
 
 ## License
 
-`pytest-flakytest` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+`flakytest` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
