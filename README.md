@@ -12,6 +12,9 @@
 
 ## Installation
 
+> [!WARNING]
+> flakytest is currently in beta. It is not recommended to use it in production.
+
 ```console
 pip install flakytest --pre
 ```
