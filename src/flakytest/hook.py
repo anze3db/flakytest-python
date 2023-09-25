@@ -49,7 +49,7 @@ import os
 import traceback
 
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
-host = os.environ.get("FLAKYTEST_HOST", "flakytest.com")
+host = os.environ.get("FLAKYTEST_HOST", "flakytest.dev")
 
 muted_tests = []
 tests = []

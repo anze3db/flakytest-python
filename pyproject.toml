@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "flakytest"
 dynamic = ["version"]
-description = 'Pytest plugin for flakytest.com'
+description = 'Pytest plugin for flakytest.dev'
 readme = "README.md"
 requires-python = ">=3.8"
 license = "MIT"

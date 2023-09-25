@@ -19,7 +19,7 @@
 pip install flakytest --pre
 ```
 
-Obtain the `FLAKYTEST_SECRET_TOKEN` from flakytest.com and set it as an environment variable (e.g. your secrets store in your CI/CD pipeline)
+Obtain the `FLAKYTEST_SECRET_TOKEN` from [flakytest.dev](https://flakytest.dev/) and set it as an environment variable (e.g. your secrets store in your CI/CD pipeline)
 
 ```console
 export FLAKYTEST_SECRET_TOKEN=****************************
