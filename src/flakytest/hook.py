@@ -60,7 +60,7 @@ def pytest_collection_modifyitems(items):
         return
 
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    conn = http.client.HTTPConnection("localhost", 8001)
+    conn = http.client.HTTPConnection(host)
     conn.request("GET", "/muted_tests/", headers=headers)
     muted_tests[:] = json.loads(conn.getresponse().read().decode())["result"]
     muted_test_set = {test["name"] for test in muted_tests}
