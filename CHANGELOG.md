@@ -11,7 +11,7 @@ Add support for GitHub Actions
 
 ## [2023.0b1] - 2023-09-25
 
-Bugfixes
+Fix host name issue
 
 ## [2023.0b0] - 2023-09-24
 
