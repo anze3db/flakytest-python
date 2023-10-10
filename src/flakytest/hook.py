@@ -55,6 +55,18 @@ muted_tests = []
 tests = []
 
 
+def get_env_data():
+    return {
+        "ci": os.environ.get("CI", False),
+        "run_id": os.environ.get("GITHUB_RUN_ID", None),
+        "run_name": os.environ.get("GITHUB_ACTION", None),
+        "run_username": os.environ.get("GITHUB_ACTOR", None),
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", 1),
+        "branch": os.environ.get("GITHUB_REF_NAME", None),
+        "sha": os.environ.get("GITHUB_SHA", None),
+    }
+
+
 def pytest_collection_modifyitems(items):
     if not token:
         return
@@ -73,7 +85,8 @@ def pytest_collection_finish(session):
 
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
     conn = http.client.HTTPConnection(host)
-    conn.request("POST", "/sessions/", headers=headers)
+    json_data = json.dumps(get_env_data()).encode()
+    conn.request("POST", "/sessions/", json_data, headers=headers)
     session.stash["session_id"] = conn.getresponse().read().decode()
 
 
