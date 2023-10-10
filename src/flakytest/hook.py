@@ -51,7 +51,7 @@ import urllib3
 http = urllib3.PoolManager(timeout=25.0, retries=3)
 
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
-host = os.environ.get("FLAKYTEST_HOST", "flakytest.dev")
+host = os.environ.get("FLAKYTEST_HOST", "https://flakytest.dev")
 
 muted_tests = []
 tests = []
