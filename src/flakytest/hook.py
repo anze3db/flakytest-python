@@ -43,10 +43,12 @@
 # def pytest_terminal_summary(terminalreporter, exitstatus, config):
 #     # Add a section?
 #     ...
-import http.client
-import json
 import os
 import traceback
+
+import urllib3
+
+http = urllib3.PoolManager(timeout=25.0, retries=3)
 
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
 host = os.environ.get("FLAKYTEST_HOST", "flakytest.dev")
@@ -72,9 +74,11 @@ def pytest_collection_modifyitems(items):
         return
 
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    conn = http.client.HTTPConnection(host)
-    conn.request("GET", "/muted_tests/", headers=headers)
-    muted_tests[:] = json.loads(conn.getresponse().read().decode())["result"]
+    response = http.request("GET", f"{host}/muted_tests/", headers=headers)
+    muted_tests[:] = response.json()["result"]
+    muted_test_str = "\n  ".join(test["name"] for test in muted_tests)
+    if muted_tests:
+        print(f"\nFlakytest muted tests:\n  {muted_test_str}\n")
     muted_test_set = {test["name"] for test in muted_tests}
     items[:] = [item for item in items if item.nodeid not in muted_test_set]
 
@@ -84,22 +88,23 @@ def pytest_collection_finish(session):
         return
 
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    conn = http.client.HTTPConnection(host)
-    json_data = json.dumps(get_env_data()).encode()
-    conn.request("POST", "/sessions/", json_data, headers=headers)
-    session.stash["session_id"] = conn.getresponse().read().decode()
+    response = http.request("POST", f"{host}/sessions/", json=get_env_data(), headers=headers)
+    response_json = response.json()
+    if "message" in response_json:
+        print(f"\n{response_json['message']}")
+    session.stash["session_id"] = response.json()["session_id"]
 
 
 def pytest_sessionfinish(session, exitstatus):
     # Send report end here?
     if not token:
         return
-    json_data = json.dumps(
-        {"tests": tests + muted_tests, "exit_status": exitstatus.name if exitstatus != 0 else "OK"}
-    ).encode()
+    json_data = {"tests": tests + muted_tests, "exit_status": exitstatus.name if exitstatus != 0 else "OK"}
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    conn = http.client.HTTPConnection(host)
-    conn.request("POST", f"/sessions/{session.stash['session_id']}/finish", json_data, headers)
+    response = http.request(
+        "POST", f"{host}/sessions/{session.stash['session_id']}/finish", json=json_data, headers=headers
+    )
+    print(f"\n{response.json()['message']}")
 
 
 def pytest_runtest_makereport(item, call):

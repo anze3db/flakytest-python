@@ -31,7 +31,9 @@ classifiers = [
   "Natural Language :: English",
   "Framework :: Pytest",
 ]
-dependencies = []
+dependencies = [
+  "urllib3"
+]
 
 [project.urls]
 Documentation = "https://github.com/anze3db/flakytest-python#readme"
@@ -132,6 +134,7 @@ ignore = [
   # Ignore assert False
   "B011",
   "S311",
+  "T201", # Print statements, remove once you figure out how to use logging
 ]
 unfixable = [
   # Don't touch unused imports
