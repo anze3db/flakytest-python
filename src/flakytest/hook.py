@@ -44,6 +44,7 @@
 #     # Add a section?
 #     ...
 import os
+import subprocess
 import traceback
 
 import urllib3
@@ -57,15 +58,105 @@ muted_tests = []
 tests = []
 
 
+def get_sha():
+    if github_sha := os.environ.get("GITHUB_SHA", None):
+        return github_sha
+    elif gitlab_sha := os.environ.get("CI_COMMIT_SHA", None):
+        return gitlab_sha
+    elif bitbucket_sha := os.environ.get("BITBUCKET_COMMIT", None):
+        return bitbucket_sha
+    elif circleci_sha := os.environ.get("CIRCLE_SHA1", None):
+        return circleci_sha
+    elif travis_sha := os.environ.get("TRAVIS_COMMIT", None):
+        return travis_sha
+
+    try:
+        process = subprocess.Popen(["git", "rev-parse", "HEAD"], shell=False, stdout=subprocess.PIPE)
+        return process.communicate()[0].strip().decode()
+    except:
+        return None
+
+
+def get_branch():
+    if github_branch := os.environ.get("GITHUB_REF_NAME", None):
+        return github_branch
+    elif gitlab_branch := os.environ.get("CI_COMMIT_REF_NAME", None):
+        return gitlab_branch
+    elif bitbucket_branch := os.environ.get("BITBUCKET_BRANCH", None):
+        return bitbucket_branch
+    elif circleci_branch := os.environ.get("CIRCLE_BRANCH", None):
+        return circleci_branch
+    elif travis_branch := os.environ.get("TRAVIS_BRANCH", None):
+        return travis_branch
+
+    try:
+        process = subprocess.Popen(["git", "rev-parse", "--abbrev-ref", "HEAD"], shell=False, stdout=subprocess.PIPE)
+        return process.communicate()[0].strip().decode()
+    except:
+        return None
+
+
+def get_run_username():
+    if github_username := os.environ.get("GITHUB_ACTOR", None):
+        return github_username
+    elif gitlab_username := os.environ.get("GITLAB_USER_LOGIN", None):
+        return gitlab_username
+    elif bitbucket_username := os.environ.get("BITBUCKET_USERNAME", None):
+        return bitbucket_username
+    elif circleci_username := os.environ.get("CIRCLE_USERNAME", None):
+        return circleci_username
+
+    try:
+        process = subprocess.Popen(["git", "log", "-1", "--pretty=format:%an"], shell=False, stdout=subprocess.PIPE)
+        return process.communicate()[0].strip().decode()
+    except:
+        return None
+
+
+def get_run_id():
+    if github_run_id := os.environ.get("GITHUB_RUN_ID", None):
+        return github_run_id
+    elif gitlab_run_id := os.environ.get("CI_PIPELINE_ID", None):
+        return gitlab_run_id
+    elif bitbucket_run_id := os.environ.get("BITBUCKET_BUILD_NUMBER", None):
+        return bitbucket_run_id
+    elif circleci_run_id := os.environ.get("CIRCLE_WORKFLOW_ID", None):
+        return circleci_run_id
+    elif travis_run_id := os.environ.get("TRAVIS_BUILD_ID", None):
+        return travis_run_id
+
+    return None
+
+
+def get_run_name():
+    if github_run_name := os.environ.get("GITHUB_ACTION", None):
+        return github_run_name
+    elif gitlab_run_name := os.environ.get("CI_JOB_NAME", None):
+        return gitlab_run_name
+    elif circleci_run_name := os.environ.get("CIRCLE_JOB", None):
+        return circleci_run_name
+    elif travis_run_name := os.environ.get("TRAVIS_JOB_NAME", None):
+        return travis_run_name
+
+    return None
+
+
+def get_run_attempt():
+    if github_run_attempt := os.environ.get("GITHUB_RUN_ATTEMPT", None):
+        return github_run_attempt
+
+    return 1
+
+
 def get_env_data():
     return {
         "ci": os.environ.get("CI", False),
-        "run_id": os.environ.get("GITHUB_RUN_ID", None),
-        "run_name": os.environ.get("GITHUB_ACTION", None),
-        "run_username": os.environ.get("GITHUB_ACTOR", None),
-        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", 1),
-        "branch": os.environ.get("GITHUB_REF_NAME", None),
-        "sha": os.environ.get("GITHUB_SHA", None),
+        "run_id": get_run_id(),
+        "run_name": get_run_name(),
+        "run_username": get_run_username(),
+        "run_attempt": get_run_attempt(),
+        "branch": get_branch(),
+        "sha": get_sha(),
     }
 
 

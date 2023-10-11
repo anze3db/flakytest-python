@@ -135,6 +135,7 @@ ignore = [
   "B011",
   "S311",
   "T201", # Print statements, remove once you figure out how to use logging
+  "S607", "S603", "E722"
 ]
 unfixable = [
   # Don't touch unused imports
