@@ -7,13 +7,13 @@ and this project adheres to [Calendar Versioning](https://calver.org).
 
 ## [2023.0b4] - 2023-11-13
 
-Improve muting tests (muted tests still run but don't fail the build)
-Gather more information about the testing environment including the Python version, install packeges, and certain env variables
+Improve muting tests
+Gather more information about the testing environment
 Improve logging
 
 ## [2023.0b3] - 2023-10-10
 
-Improve realibility
+Improve reliability
 Add logging
 
 ## [2023.0b2] - 2023-10-10
@@ -22,7 +22,7 @@ Add support for GitHub Actions
 
 ## [2023.0b1] - 2023-09-25
 
-Fix host name issue
+Fix hostname issue
 
 ## [2023.0b0] - 2023-09-24
 
