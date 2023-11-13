@@ -24,6 +24,7 @@ classifiers = [
   "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: Implementation :: CPython",
   "Programming Language :: Python :: Implementation :: PyPy",
   "Intended Audience :: Developers",
@@ -130,7 +131,7 @@ ignore = [
   # Ignore checks for possible passwords
   "S105", "S106", "S107",
   # Ignore complexity
-  "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915",
+  "C901", "PLR2004", "PLR0911", "PLR0912", "PLR0913", "PLR0915",
   # Ignore assert False
   "B011",
   "S311",

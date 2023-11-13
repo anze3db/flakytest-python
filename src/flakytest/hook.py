@@ -43,176 +43,210 @@
 # def pytest_terminal_summary(terminalreporter, exitstatus, config):
 #     # Add a section?
 #     ...
+import logging
 import os
 import subprocess
+import sys
 import traceback
 
+import pkg_resources
 import urllib3
+from _pytest.nodes import Item
+from _pytest.reports import TestReport
+from _pytest.runner import CallInfo
+
+from flakytest.__about__ import __version__
+from flakytest.env_vars import env_vars
+
+logger = logging.getLogger("flakytest")
 
 http = urllib3.PoolManager(timeout=25.0, retries=3)
 
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
-host = os.environ.get("FLAKYTEST_HOST", "https://flakytest.dev")
-
-muted_tests = []
-tests = []
+host = os.environ.get("FLAKYTEST_HOST", "https://flakytest.dev") + "/api/v1"
+test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
 
 
-def get_sha():
-    if github_sha := os.environ.get("GITHUB_SHA", None):
-        return github_sha
-    elif gitlab_sha := os.environ.get("CI_COMMIT_SHA", None):
-        return gitlab_sha
-    elif bitbucket_sha := os.environ.get("BITBUCKET_COMMIT", None):
-        return bitbucket_sha
-    elif circleci_sha := os.environ.get("CIRCLE_SHA1", None):
-        return circleci_sha
-    elif travis_sha := os.environ.get("TRAVIS_COMMIT", None):
-        return travis_sha
-
+def run_git_command(command):
     try:
-        process = subprocess.Popen(["git", "rev-parse", "HEAD"], shell=False, stdout=subprocess.PIPE)
+        process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
         return process.communicate()[0].strip().decode()
     except:
         return None
 
 
-def get_branch():
-    if github_branch := os.environ.get("GITHUB_REF_NAME", None):
-        return github_branch
-    elif gitlab_branch := os.environ.get("CI_COMMIT_REF_NAME", None):
-        return gitlab_branch
-    elif bitbucket_branch := os.environ.get("BITBUCKET_BRANCH", None):
-        return bitbucket_branch
-    elif circleci_branch := os.environ.get("CIRCLE_BRANCH", None):
-        return circleci_branch
-    elif travis_branch := os.environ.get("TRAVIS_BRANCH", None):
-        return travis_branch
+def get_git_data():
+    delimiter = "%n-___-___-%n"
+    fmt = {
+        "commit_hash": "%H",
+        "tree_hash": "%T",
+        "parent_hash": "%P",
+        "author_name": "%an",
+        "author_email": "%ae",
+        "author_date": "%aI",
+        "committer_name": "%cn",
+        "committer_email": "%ce",
+        "committer_date": "%cI",
+        "ref_names": "%D",
+        "encoding": "%e",
+        "subject": "%s",
+        "body": "%b",
+        "notes": "%N",
+        "signature_status": "%G?",
+        "signer_name": "%GS",
+        "signer_key": "%GK",
+        "signer_fingerprint": "%GF",
+        "signer_trustlevel": "%GF",
+    }
+    log = run_git_command(["git", "log", "-1", f"--pretty=format:{delimiter.join(fmt.values())}"])
+    if log:
+        log = log.split(delimiter.replace("%n", "\n"))
+        log_dict = dict(zip(fmt.keys(), log))
+    else:
+        log_dict = {}
 
-    try:
-        process = subprocess.Popen(["git", "rev-parse", "--abbrev-ref", "HEAD"], shell=False, stdout=subprocess.PIPE)
-        return process.communicate()[0].strip().decode()
-    except:
-        return None
-
-
-def get_run_username():
-    if github_username := os.environ.get("GITHUB_ACTOR", None):
-        return github_username
-    elif gitlab_username := os.environ.get("GITLAB_USER_LOGIN", None):
-        return gitlab_username
-    elif bitbucket_username := os.environ.get("BITBUCKET_USERNAME", None):
-        return bitbucket_username
-    elif circleci_username := os.environ.get("CIRCLE_USERNAME", None):
-        return circleci_username
-
-    try:
-        process = subprocess.Popen(["git", "log", "-1", "--pretty=format:%an"], shell=False, stdout=subprocess.PIPE)
-        return process.communicate()[0].strip().decode()
-    except:
-        return None
-
-
-def get_run_id():
-    if github_run_id := os.environ.get("GITHUB_RUN_ID", None):
-        return github_run_id
-    elif gitlab_run_id := os.environ.get("CI_PIPELINE_ID", None):
-        return gitlab_run_id
-    elif bitbucket_run_id := os.environ.get("BITBUCKET_BUILD_NUMBER", None):
-        return bitbucket_run_id
-    elif circleci_run_id := os.environ.get("CIRCLE_WORKFLOW_ID", None):
-        return circleci_run_id
-    elif travis_run_id := os.environ.get("TRAVIS_BUILD_ID", None):
-        return travis_run_id
-
-    return None
-
-
-def get_run_name():
-    if github_run_name := os.environ.get("GITHUB_ACTION", None):
-        return github_run_name
-    elif gitlab_run_name := os.environ.get("CI_JOB_NAME", None):
-        return gitlab_run_name
-    elif circleci_run_name := os.environ.get("CIRCLE_JOB", None):
-        return circleci_run_name
-    elif travis_run_name := os.environ.get("TRAVIS_JOB_NAME", None):
-        return travis_run_name
-
-    return None
-
-
-def get_run_attempt():
-    if github_run_attempt := os.environ.get("GITHUB_RUN_ATTEMPT", None):
-        return github_run_attempt
-
-    return 1
-
-
-def get_env_data():
-    return {
-        "ci": os.environ.get("CI", False),
-        "run_id": get_run_id(),
-        "run_name": get_run_name(),
-        "run_username": get_run_username(),
-        "run_attempt": get_run_attempt(),
-        "branch": get_branch(),
-        "sha": get_sha(),
+    return log_dict | {
+        "branch": run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
     }
 
 
-def pytest_collection_modifyitems(items):
-    if not token:
-        return
+def get_env_data():
+    return {env_var: os.environ.get(env_var) for env_var in env_vars if env_var in os.environ}
 
+
+def make_request(url, json_data):
     headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    response = http.request("GET", f"{host}/muted_tests/", headers=headers)
-    muted_tests[:] = response.json()["result"]
-    muted_test_str = "\n  ".join(test["name"] for test in muted_tests)
-    if muted_tests:
-        print(f"\nFlakytest muted tests:\n  {muted_test_str}\n")
-    muted_test_set = {test["name"] for test in muted_tests}
-    items[:] = [item for item in items if item.nodeid not in muted_test_set]
-
-
-def pytest_collection_finish(session):
-    if not token:
-        return
-
-    headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    response = http.request("POST", f"{host}/sessions/", json=get_env_data(), headers=headers)
+    try:
+        response = http.request("POST", host + url, json=json_data, headers=headers)
+    except:
+        logger.error(f"Flakytest: Failed to send data to {host}{url}")
+        traceback.print_exc()
+        return None
+    if response.status != 200:
+        logger.error(
+            f"Flakytest: Failed to send data to {host}{url} non 200 response]\n{response.json().get('message')}"
+        )
+        return None
     response_json = response.json()
     if "message" in response_json:
-        print(f"\n{response_json['message']}")
-    session.stash["session_id"] = response.json()["session_id"]
+        logger.warning(f"\n{response_json['message']}")
+    return response_json
+
+
+def get_installed_packages():
+    installed_packages = pkg_resources.working_set
+    installed_packages_list = sorted([f"{i.key}=={i.version}" for i in installed_packages])
+    return {package.split("==")[0]: package.split("==")[1] for package in installed_packages_list}
+
+
+def pytest_configure(config):
+    """First pytest hook called
+
+    Send env/git/python data to host, retrieve ingest id and muted tests and store them in the config.stash"""
+    if not token:
+        return
+
+    response_json = make_request(
+        "/ingest/start",
+        {
+            "env": get_env_data(),
+            "git": get_git_data(),
+            "python_version": sys.version,
+            "packages": get_installed_packages(),
+            "version": __version__,
+        },
+    )
+    if not response_json:
+        return
+
+    config.stash["ingest_id"] = response_json.get("ingest_id")
+    muted_tests = config.stash["muted_tests"] = {test["name"] for test in response_json.get("muted_tests", [])}
+    config.stash["tests"] = []
+
+    if muted_tests:
+        muted_test_str = "\n  ".join(test for test in muted_tests)
+        logger.info(f"\nFlakytest muted tests:\n  {muted_test_str}\n")
+
+
+def pytest_runtest_makereport(item: Item, call: CallInfo[None]) -> TestReport:
+    """Second pytest hook, called after each test.
+
+    If test is muted, change the outcome to mute-failed or mute-passed.
+    """
+
+    muted_tests = item.config.stash.get("muted_tests", {})
+    report = TestReport.from_item_and_call(item, call)
+
+    if item.nodeid in muted_tests:
+        if call.when == "call":
+            if report.failed:
+                report.outcome = "mute-failed"
+            else:
+                report.outcome = "mute-passed"
+    return report
+
+
+def pytest_report_teststatus(report, config):
+    """Third pytest hook, called after each test's report has been created.
+
+    Add test data to the tests list in config.stash and send it to the host if the list is long enough.
+    """
+    ingest_id = config.stash.get("ingest_id", None)
+    if not ingest_id:
+        return
+
+    if report.when == "setup" and report.outcome == "skipped":
+        pass
+    elif report.when != "call":
+        return
+
+    tests = config.stash.get("tests", [])
+
+    tests.append(
+        {
+            "name": report.nodeid,
+            "location": report.location,
+            "keywords": report.keywords,
+            "outcome": report.outcome,
+            "longrepr": str(report.longrepr),
+            "sections": report.sections,
+            "duration": report.duration,
+            "caplog": report.caplog,
+            "capstderr": report.capstderr,
+            "capstdout": report.capstdout,
+            "count_towards_summary": report.count_towards_summary,
+            "failed": True if report.outcome == "mute-failed" else report.failed,
+            "passed": False if report.outcome == "mute-failed" else report.passed,
+            "skipped": report.skipped,
+            "muted": True if report.outcome in ("mute-failed", "mute-passed") else False,
+        }
+    )
+    if len(tests) >= test_batch_size:
+        json_data = {
+            "ingest_id": ingest_id,
+            "tests": tests,
+        }
+        make_request("/ingest/progress", json_data)
+        tests.clear()
+
+    if report.outcome == "mute-failed":
+        return "muted", "M", ("MUTE", {"red": True})
+    elif report.outcome == "mute-passed":
+        return "muted", "m", ("MUTE", {"green": True})
 
 
 def pytest_sessionfinish(session, exitstatus):
-    # Send report end here?
-    if not token:
+    """Last pytest hook, called after all tests are done.
+
+    Send the remaining tests to the host along with the exit status."""
+    ingest_id = session.config.stash.get("ingest_id", None)
+    tests = session.config.stash.get("tests", [])
+    if not ingest_id:
         return
-    json_data = {"tests": tests + muted_tests, "exit_status": exitstatus.name if exitstatus != 0 else "OK"}
-    headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    response = http.request(
-        "POST", f"{host}/sessions/{session.stash['session_id']}/finish", json=json_data, headers=headers
-    )
-    print(f"\n{response.json()['message']}")
 
-
-def pytest_runtest_makereport(item, call):
-    if call.when == "call":
-        # Get the test status
-        if call.excinfo is None:
-            status = "PASS"
-        elif call.excinfo.type == AssertionError:
-            status = "FAIL"
-        else:
-            status = "ERROR"
-
-        tests.append(
-            {
-                "name": item.nodeid,
-                "status": status,
-                "duration": call.duration,
-                "output": "\n".join(traceback.format_tb(call.excinfo.tb)) if call.excinfo else "",
-            }
-        )
+    json_data = {
+        "ingest_id": ingest_id,
+        "tests": tests,
+        "exit_status": exitstatus.name if exitstatus != 0 else "OK",
+    }
+    make_request("/ingest/end", json_data)
