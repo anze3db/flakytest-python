@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org).
 
+## [2023.0b5] - 2023-11-13
+
+Add whitelisted env variables
+
 ## [2023.0b4] - 2023-11-13
 
 Improve muting tests
