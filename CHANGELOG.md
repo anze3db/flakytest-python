@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org).
 
+## [2023.0b6] - 2023-11-19
+
+Fix longrepr parsing
+
 ## [2023.0b5] - 2023-11-13
 
 Add whitelisted env variables

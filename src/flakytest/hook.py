@@ -208,7 +208,7 @@ def pytest_report_teststatus(report, config):
             "location": report.location,
             "keywords": report.keywords,
             "outcome": report.outcome,
-            "longrepr": str(report.longrepr),
+            "longrepr": str(report.longrepr) if report.longrepr else None,
             "sections": report.sections,
             "duration": report.duration,
             "caplog": report.caplog,
