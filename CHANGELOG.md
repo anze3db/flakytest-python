@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org).
 
+## [2023.0b7] - 2023-11-23
+
+Add tests for all supported Python versions (3.8, 3.9, 3.10, 3.11, 3.12)
+Add tests for all supported Pytest versions (6.x, 7.x)
+
+
 ## [2023.0b6] - 2023-11-19
 
 Fix longrepr parsing
