@@ -34,8 +34,8 @@ jobs:
         pip install hatch
     - name: Build package
       run: hatch build
-    - name: Install pytest
-      run: pip install 'pytest${{ matrix.pytest-version }}'
+    - name: Install pytest${{ matrix.pytest-version }}
+      run: hatch run pip install 'pytest${{ matrix.pytest-version }}'
     - name: Test package
       run: hatch run test
       env:
