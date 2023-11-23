@@ -51,9 +51,9 @@ import traceback
 
 import pkg_resources
 import urllib3
-from _pytest.nodes import Item
-from _pytest.reports import TestReport
-from _pytest.runner import CallInfo
+from _pytest.reports import TestReport  # Needed for 6.x support
+from _pytest.runner import CallInfo  # # Needed for 6.x support
+from pytest import Item
 
 from flakytest.__about__ import __version__
 from flakytest.env_vars import env_vars
@@ -65,6 +65,7 @@ http = urllib3.PoolManager(timeout=25.0, retries=3)
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
 host = os.environ.get("FLAKYTEST_HOST", "https://flakytest.dev") + "/api/v1"
 test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
+stash = {}  # Can't use Stash from Pytest 7.x because it's not available in 6.x
 
 
 def run_git_command(command):
@@ -142,7 +143,7 @@ def get_installed_packages():
     return {package.split("==")[0]: package.split("==")[1] for package in installed_packages_list}
 
 
-def pytest_configure(config):
+def pytest_configure(_):
     """First pytest hook called
 
     Send env/git/python data to host, retrieve ingest id and muted tests and store them in the config.stash"""
@@ -162,9 +163,9 @@ def pytest_configure(config):
     if not response_json:
         return
 
-    config.stash["ingest_id"] = response_json.get("ingest_id")
-    muted_tests = config.stash["muted_tests"] = {test["name"] for test in response_json.get("muted_tests", [])}
-    config.stash["tests"] = []
+    stash["ingest_id"] = response_json.get("ingest_id")
+    muted_tests = stash["muted_tests"] = {test["name"] for test in response_json.get("muted_tests", [])}
+    stash["tests"] = []
 
     if muted_tests:
         muted_test_str = "\n  ".join(test for test in muted_tests)
@@ -177,7 +178,7 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]) -> TestReport:
     If test is muted, change the outcome to mute-failed or mute-passed.
     """
 
-    muted_tests = item.config.stash.get("muted_tests", {})
+    muted_tests = stash.get("muted_tests", {})
     report = TestReport.from_item_and_call(item, call)
 
     if item.nodeid in muted_tests:
@@ -189,12 +190,12 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]) -> TestReport:
     return report
 
 
-def pytest_report_teststatus(report, config):
+def pytest_report_teststatus(report, _):
     """Third pytest hook, called after each test's report has been created.
 
     Add test data to the tests list in config.stash and send it to the host if the list is long enough.
     """
-    ingest_id = config.stash.get("ingest_id", None)
+    ingest_id = stash.get("ingest_id", None)
     if not ingest_id:
         return
 
@@ -203,7 +204,7 @@ def pytest_report_teststatus(report, config):
     elif report.when != "call":
         return
 
-    tests = config.stash.get("tests", [])
+    tests = stash.get("tests", [])
 
     tests.append(
         {
@@ -238,12 +239,12 @@ def pytest_report_teststatus(report, config):
         return "muted", "m", ("MUTE", {"green": True})
 
 
-def pytest_sessionfinish(session, exitstatus):
+def pytest_sessionfinish(_, exitstatus):
     """Last pytest hook, called after all tests are done.
 
     Send the remaining tests to the host along with the exit status."""
-    ingest_id = session.config.stash.get("ingest_id", None)
-    tests = session.config.stash.get("tests", [])
+    ingest_id = stash.get("ingest_id", None)
+    tests = stash.get("tests", [])
     if not ingest_id:
         return
 
