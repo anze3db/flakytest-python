@@ -16,7 +16,7 @@
 > flakytest is currently in beta. It is not recommended to use it in production.
 
 ```console
-pip install flakytest --pre
+pip install flakytest
 ```
 
 Obtain the `FLAKYTEST_SECRET_TOKEN` from [flakytest.dev](https://flakytest.dev/) and set it as an environment variable (e.g. your secrets store in your CI/CD pipeline)
