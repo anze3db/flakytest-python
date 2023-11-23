@@ -34,3 +34,13 @@ def test_skipped():
 
 def test_flaky():
     assert random.randint(0, 1) < 0.5
+
+
+def raise_my_exception():
+    msg = "my exception"
+    raise Exception(msg)
+
+
+def test_error():
+    raise_my_exception()
+    assert True
