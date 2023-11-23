@@ -143,7 +143,7 @@ def get_installed_packages():
     return {package.split("==")[0]: package.split("==")[1] for package in installed_packages_list}
 
 
-def pytest_configure(_):
+def pytest_configure():
     """First pytest hook called
 
     Send env/git/python data to host, retrieve ingest id and muted tests and store them in the config.stash"""
@@ -190,7 +190,7 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]) -> TestReport:
     return report
 
 
-def pytest_report_teststatus(report, _):
+def pytest_report_teststatus(report):
     """Third pytest hook, called after each test's report has been created.
 
     Add test data to the tests list in config.stash and send it to the host if the list is long enough.
@@ -239,7 +239,7 @@ def pytest_report_teststatus(report, _):
         return "muted", "m", ("MUTE", {"green": True})
 
 
-def pytest_sessionfinish(_, exitstatus):
+def pytest_sessionfinish(exitstatus):
     """Last pytest hook, called after all tests are done.
 
     Send the remaining tests to the host along with the exit status."""
