@@ -33,7 +33,8 @@ classifiers = [
   "Framework :: Pytest",
 ]
 dependencies = [
-  "urllib3"
+  "urllib3",
+  "setuptools",
 ]
 
 [project.urls]
