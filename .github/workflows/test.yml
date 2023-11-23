@@ -1,19 +1,20 @@
-name: Publish to PyPI
+name: Test
 
 on:
-  release:
-    types: [published]
+  push:
+    branches:
+    - main
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
 
     environment: release
     permissions:
@@ -34,5 +35,5 @@ jobs:
       run: hatch build
     - name: Test package
       run: hatch run test
-    - name: Publish package distributions to PyPI
-      uses: pypa/gh-action-pypi-publish@release/v1
+      env:
+        FLAKYTEST_SECRET_TOKEN: ${{ secrets.FLAKYTEST_SECRET_TOKEN }}
