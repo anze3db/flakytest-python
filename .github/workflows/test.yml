@@ -15,6 +15,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        pytest-version: ["~=6.0", "~=7.0"] # Test with Python 6.x and 7.x
 
     environment: release
     permissions:
@@ -22,7 +23,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python ${{ matrix.python-version }} & Pytest ${{ matrix.pytest-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
@@ -33,6 +34,8 @@ jobs:
         pip install hatch
     - name: Build package
       run: hatch build
+    - name: Install pytest
+      run: pip install 'pytest${{ matrix.pytest-version }}'
     - name: Test package
       run: hatch run test
       env:
