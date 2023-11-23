@@ -105,8 +105,11 @@ def get_git_data():
     else:
         log_dict = {}
 
-    return log_dict | {
-        "branch": run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+    return {
+        **log_dict,
+        **{
+            "branch": run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
+        },
     }
 
 
