@@ -47,7 +47,6 @@ import logging
 import os
 import subprocess
 import sys
-import traceback
 
 import pkg_resources
 import urllib3
@@ -70,7 +69,7 @@ stash = {}  # Can't use Stash from Pytest 7.x because it's not available in 6.x
 
 def run_git_command(command):
     try:
-        process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE)
+        process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         return process.communicate()[0].strip().decode()
     except:
         return None
@@ -123,8 +122,6 @@ def make_request(url, json_data):
     try:
         response = http.request("POST", host + url, json=json_data, headers=headers)
     except:
-        logger.error(f"Flakytest: Failed to send data to {host}{url}")
-        traceback.print_exc()
         return None
     if response.status != 200:
         logger.error(
