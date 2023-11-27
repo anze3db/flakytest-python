@@ -105,12 +105,11 @@ def get_git_data():
     else:
         log_dict = {}
 
-    return {
-        **log_dict,
-        **{
-            "branch": run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"]),
-        },
-    }
+    branch = run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch:
+        log_dict["branch"] = branch
+
+    return log_dict
 
 
 def get_env_data():
