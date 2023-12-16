@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org).
 
+## [2023.0b10] - 2023-12-16
+
+Fix crash when server is unreachable
+
 ## [2023.0b9] - 2023-11-27
 
 Fix malfromed payload when when the project isn't using Git

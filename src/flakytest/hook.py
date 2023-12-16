@@ -123,9 +123,11 @@ def make_request(url, json_data):
     except:
         return None
     if response.status != 200:
-        logger.error(
-            f"Flakytest: Failed to send data to {host}{url} non 200 response]\n{response.json().get('message')}"
-        )
+        try:
+            message = response.json()["message"]
+        except:
+            message = ""
+        logger.error(f"Flakytest: Failed to send data to {host}{url} non 200 response]\n{message}")
         return None
     response_json = response.json()
     if "message" in response_json:
