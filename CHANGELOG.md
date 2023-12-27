@@ -9,7 +9,6 @@ and this project adheres to [Calendar Versioning](https://calver.org).
 
 Load env variables from `.env` file if present
 
-
 ## [2023.0b10] - 2023-12-16
 
 Fix crash when server is unreachable
