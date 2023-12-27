@@ -33,6 +33,7 @@ classifiers = [
   "Framework :: Pytest",
 ]
 dependencies = [
+  "python-dotenv",
   "urllib3",
   "setuptools",
 ]

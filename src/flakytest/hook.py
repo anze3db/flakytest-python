@@ -52,10 +52,13 @@ import pkg_resources
 import urllib3
 from _pytest.reports import TestReport  # Needed for 6.x support
 from _pytest.runner import CallInfo  # # Needed for 6.x support
+from dotenv import load_dotenv
 from pytest import Item
 
 from flakytest.__about__ import __version__
 from flakytest.env_vars import env_vars
+
+load_dotenv()
 
 logger = logging.getLogger("flakytest")
 
