@@ -48,6 +48,7 @@ import os
 import subprocess
 import sys
 from importlib import metadata
+from typing import Any
 
 import urllib3
 from _pytest.reports import TestReport  # Needed for 6.x support
@@ -67,7 +68,7 @@ http = urllib3.PoolManager(timeout=25.0, retries=3)
 token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
 host = os.environ.get("FLAKYTEST_HOST", "https://flakytest.dev") + "/api/v1"
 test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
-stash = {}  # Can't use Stash from Pytest 7.x because it's not available in 6.x
+stash: dict[str, Any] = {}  # Can't use Stash from Pytest 7.x because it's not available in 6.x
 
 
 def run_git_command(command):
@@ -189,10 +190,11 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]) -> TestReport:
 
     if item.nodeid in muted_tests:
         if call.when == "call":
+            # pytest only types passed/failed/skipped, muted tests get custom outcomes that flakytest.dev uses
             if report.failed:
-                report.outcome = "mute-failed"
+                report.outcome = "mute-failed"  # type: ignore[assignment]
             else:
-                report.outcome = "mute-passed"
+                report.outcome = "mute-passed"  # type: ignore[assignment]
     return report
 
 
