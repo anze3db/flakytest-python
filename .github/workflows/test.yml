@@ -14,8 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         pytest-version: ["~=6.0", "~=7.0"] # Test with Python 6.x and 7.x
+        exclude: # pytest 6.x doesn't support Python 3.14+
+        - python-version: "3.14"
+          pytest-version: "~=6.0"
+        - python-version: "3.15"
+          pytest-version: "~=6.0"
 
     environment: release
     permissions:
@@ -27,6 +32,7 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
+        allow-prereleases: true
         cache: 'pip'
     - name: Install dependencies
       run: |

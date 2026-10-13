@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Calendar Versioning](https://calver.org).
 
+## [2026.0b1] - 2026-10-13
+
+Replace `pkg_resources` with `importlib.metadata` to support setuptools 81+ (which removed `pkg_resources`)
+Drop the `setuptools` runtime dependency and declare `pytest` as a runtime dependency
+Add support for Python 3.13, 3.14 and 3.15
+Drop support for Python 3.8, 3.9 and 3.10 (end-of-life)
+
 ## [2023.0b11] - 2023-12-27
 
 Load env variables from `.env` file if present

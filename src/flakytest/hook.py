@@ -47,8 +47,8 @@ import logging
 import os
 import subprocess
 import sys
+from importlib import metadata
 
-import pkg_resources
 import urllib3
 from _pytest.reports import TestReport  # Needed for 6.x support
 from _pytest.runner import CallInfo  # # Needed for 6.x support
@@ -104,7 +104,7 @@ def get_git_data():
     log = run_git_command(["git", "log", "-1", f"--pretty=format:{delimiter.join(fmt.values())}"])
     if log:
         log = log.split(delimiter.replace("%n", "\n"))
-        log_dict = dict(zip(fmt.keys(), log))
+        log_dict = dict(zip(fmt.keys(), log, strict=False))
     else:
         log_dict = {}
 
@@ -139,9 +139,14 @@ def make_request(url, json_data):
 
 
 def get_installed_packages():
-    installed_packages = pkg_resources.working_set
-    installed_packages_list = sorted([f"{i.key}=={i.version}" for i in installed_packages])
-    return {package.split("==")[0]: package.split("==")[1] for package in installed_packages_list}
+    packages = {}
+    for dist in metadata.distributions():
+        name = dist.metadata.get("Name")
+        if not name:
+            continue
+        # The same package can be on sys.path more than once, the first one found wins (same as pkg_resources)
+        packages.setdefault(name.lower(), dist.metadata.get("Version"))
+    return dict(sorted(packages.items()))
 
 
 def pytest_configure():
