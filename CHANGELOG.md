@@ -11,10 +11,30 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+## [2026.0b0](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b0) - 2026-10-14
+
+### Highlights
+
 - Replace `pkg_resources` with `importlib.metadata` to support setuptools 81+ (which removed `pkg_resources`)
 - Drop the `setuptools` runtime dependency and declare `pytest` as a runtime dependency
 - Add support for Python 3.13, 3.14 and 3.15
 - Drop support for Python 3.8, 3.9 and 3.10 (end-of-life)
+
+### Changes
+
+* Replace pkg_resources with importlib.metadata
+* Fix mypy errors and run lint in CI
+* Release with just and scripts/release.py, like django-tui
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/flakytest-python/compare/2023.0b11...2026.0b0
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [2023.0b11] - 2023-12-27
 
