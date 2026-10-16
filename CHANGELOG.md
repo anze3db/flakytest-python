@@ -11,6 +11,19 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+- Profile your tests: `pytest --flakytest-profile` (or `flakytest run`) samples the whole session with
+  tachyon (Python 3.15+) or py-spy, attributes every sample to a test and its setup/call/teardown, and
+  writes a local HTML report: time by category (database, password hashing, network, sleep, fixtures,
+  imports, …), the pieces of work in each test, hot lines in your code, call trees, fixture times and
+  repeated SQL queries, for every test, class and file. No account needed.
+- Ranked "fix next" suggestions with pytest, Django and SQLAlchemy perf tricks, each with the time it
+  costs, the lines that trigger it and how to keep tests correct.
+- The `flakytest` command: `run`, `report` (Markdown/JSON for people and coding agents), `compare`
+  (speed and correctness between runs), `serve`, `list`, `upload`, `doctor`, and `mcp`, an MCP server
+  over local runs.
+- With `FLAKYTEST_SECRET_TOKEN`, profiles are uploaded to flakytest.dev, and runs report their
+  environment (CI job or developer machine) and changed files.
+
 ## [2026.0b0](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b0) - 2026-10-14
 
 ### Highlights
