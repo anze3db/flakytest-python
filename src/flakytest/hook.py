@@ -43,100 +43,26 @@
 # def pytest_terminal_summary(terminalreporter, exitstatus, config):
 #     # Add a section?
 #     ...
-import logging
 import os
-import subprocess
 import sys
 from importlib import metadata
-from typing import Any
 
-import urllib3
+import pytest
 from _pytest.reports import TestReport  # Needed for 6.x support
 from _pytest.runner import CallInfo  # # Needed for 6.x support
-from dotenv import load_dotenv
 from pytest import Item
 
 from flakytest.__about__ import __version__
+from flakytest.cloud import logger, make_request, stash, token
 from flakytest.env_vars import env_vars
+from flakytest.environment import detect_environment, get_git_data
+from flakytest.profiling.plugin import ProfilerPlugin, add_options, profiling_requested
 
-load_dotenv()
-
-logger = logging.getLogger("flakytest")
-
-http = urllib3.PoolManager(timeout=25.0, retries=3)
-
-token = os.environ.get("FLAKYTEST_SECRET_TOKEN")
-host = os.environ.get("FLAKYTEST_HOST", "https://flakytest.dev") + "/api/v1"
 test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
-stash: dict[str, Any] = {}  # Can't use Stash from Pytest 7.x because it's not available in 6.x
-
-
-def run_git_command(command):
-    try:
-        process = subprocess.Popen(command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        return process.communicate()[0].strip().decode()
-    except:
-        return None
-
-
-def get_git_data():
-    delimiter = "%n-___-___-%n"
-    fmt = {
-        "commit_hash": "%H",
-        "tree_hash": "%T",
-        "parent_hash": "%P",
-        "author_name": "%an",
-        "author_email": "%ae",
-        "author_date": "%aI",
-        "committer_name": "%cn",
-        "committer_email": "%ce",
-        "committer_date": "%cI",
-        "ref_names": "%D",
-        "encoding": "%e",
-        "subject": "%s",
-        "body": "%b",
-        "notes": "%N",
-        "signature_status": "%G?",
-        "signer_name": "%GS",
-        "signer_key": "%GK",
-        "signer_fingerprint": "%GF",
-        "signer_trustlevel": "%GF",
-    }
-    log = run_git_command(["git", "log", "-1", f"--pretty=format:{delimiter.join(fmt.values())}"])
-    if log:
-        log = log.split(delimiter.replace("%n", "\n"))
-        log_dict = dict(zip(fmt.keys(), log, strict=False))
-    else:
-        log_dict = {}
-
-    branch = run_git_command(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-    if branch:
-        log_dict["branch"] = branch
-
-    return log_dict
 
 
 def get_env_data():
     return {env_var: os.environ.get(env_var) for env_var in env_vars if env_var in os.environ}
-
-
-def make_request(url, json_data):
-    headers = {"Content-type": "application/json", "Accept": "text/plain", "Authorization": token}
-    try:
-        response = http.request("POST", host + url, json=json_data, headers=headers)
-    except:
-        return None
-    if response.status != 200:
-        try:
-            message = response.json()["message"]
-        except:
-            message = ""
-        logger.error(f"Flakytest: Failed to send data to {host}{url} non 200 response]\n{message}")
-        return None
-    response_json = response.json()
-    if "message" in response_json:
-        logger.warning(f"\n{response_json['message']}")
-    return response_json
 
 
 def get_installed_packages():
@@ -150,10 +76,29 @@ def get_installed_packages():
     return dict(sorted(packages.items()))
 
 
-def pytest_configure():
+def pytest_addoption(parser):
+    add_options(parser)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config):
+    """Start profiling before conftest.py files (and Django, …) are imported, so startup is measured too."""
+    if profiling_requested(early_config) and ProfilerPlugin.active is None:
+        plugin = ProfilerPlugin(early_config)
+        plugin.start()
+        early_config.pluginmanager.register(plugin, "flakytest-profiler")
+
+
+def pytest_configure(config):
     """First pytest hook called
 
     Send env/git/python data to host, retrieve ingest id and muted tests and store them in the config.stash"""
+    if profiling_requested(config) and not config.pluginmanager.has_plugin("flakytest-profiler"):
+        if ProfilerPlugin.active is None:  # e.g. options passed through pytest.main() skip initial conftests
+            plugin = ProfilerPlugin(config)
+            plugin.start()
+            config.pluginmanager.register(plugin, "flakytest-profiler")
+
     if not token:
         return
 
@@ -161,6 +106,7 @@ def pytest_configure():
         "/ingest/start",
         {
             "env": get_env_data(),
+            "environment": detect_environment(),
             "git": get_git_data(),
             "python_version": sys.version,
             "packages": get_installed_packages(),

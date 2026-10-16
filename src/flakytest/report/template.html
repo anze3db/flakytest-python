@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flakytest report</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ee;
+  --surface-hover: #eeede8;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #76746e;
+  --line: #e1e0d9;
+  --line-strong: #c3c2b7;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --selected: #e4eefb;
+  --good: #0ca30c;
+  --good-ink: #006300;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --critical-ink: #b42323;
+  --f-db: #2a78d6;
+  --f-external: #eb6834;
+  --f-code: #1baf7a;
+  --f-waiting: #eda100;
+  --f-data: #e87ba4;
+  --f-runtime: #6250d6;
+  --f-hashing: #e34948;
+  --f-other: #a8a69e;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #222220;
+    --surface-hover: #2a2a27;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #94928b;
+    --line: #2c2c2a;
+    --line-strong: #44443f;
+    --accent: #3987e5;
+    --accent-ink: #86b6ef;
+    --selected: #1b2b40;
+    --good-ink: #0ca30c;
+    --critical-ink: #e66767;
+    --f-db: #3987e5;
+    --f-external: #d95926;
+    --f-code: #199e70;
+    --f-waiting: #c98500;
+    --f-data: #d55181;
+    --f-runtime: #9085e9;
+    --f-hashing: #e66767;
+    --f-other: #6d6c66;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #222220;
+  --surface-hover: #2a2a27;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #94928b;
+  --line: #2c2c2a;
+  --line-strong: #44443f;
+  --accent: #3987e5;
+  --accent-ink: #86b6ef;
+  --selected: #1b2b40;
+  --good-ink: #0ca30c;
+  --critical-ink: #e66767;
+  --f-db: #3987e5;
+  --f-external: #d95926;
+  --f-code: #199e70;
+  --f-waiting: #c98500;
+  --f-data: #d55181;
+  --f-runtime: #9085e9;
+  --f-hashing: #e66767;
+  --f-other: #6d6c66;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--page); color: var(--ink); font: 14px/1.45 var(--sans); }
+button, input, select { font: inherit; color: inherit; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+a { color: var(--accent-ink); }
+.app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+header.top { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.brand { font-family: var(--mono); font-weight: 700; letter-spacing: 3px; font-size: 15px; white-space: nowrap; }
+.brand span { color: var(--accent); }
+.run-meta { color: var(--ink-2); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.icon-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.icon-btn:hover { background: var(--surface-hover); }
+.main { display: grid; grid-template-columns: minmax(300px, 420px) 1fr; min-height: 0; }
+aside.list { border-right: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.list-tools { padding: 10px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+.list-tools input[type=search] { width: 100%; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--page); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 2px 10px; font-size: 12.5px; cursor: pointer; }
+.chip[aria-pressed=true] { background: var(--selected); border-color: var(--accent); color: var(--accent-ink); }
+.tree { overflow: auto; flex: 1; padding: 4px 0 24px; }
+.row { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 6px; padding: 3px 12px 3px calc(8px + var(--depth, 0) * 16px); cursor: pointer; border-left: 3px solid transparent; }
+.row:hover { background: var(--surface-hover); }
+.row.selected { background: var(--selected); border-left-color: var(--accent); }
+.row .twisty { color: var(--muted); font-size: 10px; text-align: center; }
+.row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.row .name small { color: var(--muted); }
+.row .time { font-variant-numeric: tabular-nums; color: var(--ink-2); font-size: 12.5px; text-align: right; }
+.row .minibar { grid-column: 2 / 4; height: 4px; margin: 2px 0 1px; }
+.row.root { font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; vertical-align: 1px; flex: none; }
+.o-failed, .o-error { background: var(--critical); }
+.o-passed, .o-xpassed { background: var(--good); }
+.o-skipped, .o-xfailed { background: var(--line-strong); }
+section.detail { overflow: auto; padding: 20px 28px 64px; min-width: 0; }
+.detail-inner { max-width: 1100px; }
+h1 { font-size: 20px; margin: 0 0 4px; word-break: break-word; font-weight: 650; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin: 28px 0 10px; font-weight: 650; }
+.sub { color: var(--ink-2); margin: 0 0 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0 4px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+.tile .label { color: var(--ink-2); font-size: 12.5px; }
+.tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+.tile .hint { color: var(--muted); font-size: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+.stack { display: flex; height: 18px; gap: 2px; border-radius: 4px; overflow: hidden; }
+.stack > div { min-width: 2px; height: 100%; }
+.stack.thin { height: 4px; gap: 1px; border-radius: 2px; }
+.legend { display: grid; grid-template-columns: auto 1fr auto auto; gap: 4px 12px; margin-top: 12px; align-items: center; font-size: 13px; }
+.legend .sw { width: 10px; height: 10px; border-radius: 2px; }
+.legend .num { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-2); }
+.legend .bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; min-width: 60px; }
+.legend .bar > div { height: 100%; border-radius: 3px; }
+.unsampled { background: repeating-linear-gradient(45deg, var(--f-other), var(--f-other) 3px, transparent 3px, transparent 6px) !important; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--line-strong); padding: 6px 8px; white-space: nowrap; }
+td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.link { cursor: pointer; }
+tr.link:hover td { background: var(--surface-hover); }
+.why { color: var(--ink-2); }
+.code { font-family: var(--mono); font-size: 12px; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.insight { border: 1px solid var(--line); border-left: 4px solid var(--line-strong); border-radius: 8px; padding: 12px 16px; background: var(--surface); margin-bottom: 10px; }
+.insight.high { border-left-color: var(--critical); }
+.insight.medium { border-left-color: var(--serious); }
+.insight.low { border-left-color: var(--line-strong); }
+.insight h3 { margin: 0; font-size: 15px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.insight .impact { color: var(--ink-2); font-weight: 500; font-size: 13px; }
+.insight p { margin: 6px 0; }
+.insight .label { font-weight: 600; }
+.sev { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border-radius: 4px; padding: 1px 6px; border: 1px solid currentColor; }
+.sev.high { color: var(--critical-ink); }
+.sev.medium { color: #b5552c; }
+.sev.low { color: var(--muted); }
+:root[data-theme="dark"] .sev.medium { color: var(--serious); }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) .sev.medium { color: var(--serious); } }
+details > summary { cursor: pointer; color: var(--ink-2); }
+.warn { border: 1px solid var(--warning); background: color-mix(in srgb, var(--warning) 12%, var(--surface)); border-radius: 8px; padding: 10px 14px; margin: 12px 0; }
+.warn::before { content: "⚠ "; }
+.calltree { font-size: 13px; }
+.ct-row { display: grid; grid-template-columns: 64px 46px 1fr; gap: 8px; align-items: center; padding: 2px 4px; border-radius: 4px; cursor: default; }
+.ct-row:hover { background: var(--surface-hover); }
+.ct-row .t { text-align: right; font-variant-numeric: tabular-nums; }
+.ct-row .p { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.ct-fn { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: calc(var(--d) * 14px); }
+.ct-fn .tw { width: 12px; flex: none; color: var(--muted); cursor: pointer; font-size: 10px; text-align: center; }
+.ct-fn .fn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ct-fn .loc { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.ct-fn .cat { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.ct-src { grid-column: 3; padding-left: calc(var(--d) * 14px + 32px); font-family: var(--mono); font-size: 12px; color: var(--ink-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.kind-test .fn, .kind-app .fn { font-weight: 600; }
+.kind-lib .fn, .kind-stdlib .fn { color: var(--ink-2); }
+.toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; color: var(--ink-2); font-size: 13px; }
+.phasebar { display: flex; gap: 2px; height: 26px; border-radius: 4px; overflow: hidden; font-size: 12px; }
+.phasebar > div { display: flex; align-items: center; padding: 0 8px; white-space: nowrap; overflow: hidden; color: var(--ink); min-width: 3px; }
+.ph-setup { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); }
+.ph-call { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.ph-teardown { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.empty { color: var(--muted); font-style: italic; }
+.pill { display: inline-block; font-size: 12px; padding: 0 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); margin-right: 4px; white-space: nowrap; }
+pre.failure { background: var(--surface-2); padding: 12px; border-radius: 6px; overflow: auto; max-height: 420px; font-size: 12px; }
+#tooltip { position: fixed; pointer-events: none; background: var(--ink); color: var(--page); padding: 6px 10px; border-radius: 6px; font-size: 12.5px; z-index: 10; display: none; max-width: 360px; }
+.toast { position: fixed; bottom: 16px; right: 16px; background: var(--ink); color: var(--page); border-radius: 6px; padding: 8px 14px; display: none; }
+@media (max-width: 860px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
+  aside.list { border-right: 0; border-bottom: 1px solid var(--line); }
+  section.detail { padding: 16px; }
+  .cols { grid-template-columns: 1fr; }
+  .run-meta { display: none; }
+  .ct-row { grid-template-columns: 54px 40px 1fr; }
+}
+@media (forced-colors: active) { .stack > div, .legend .sw { forced-color-adjust: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">FLAKY<span>TEST</span></div>
+    <div class="run-meta" id="run-meta"></div>
+    <button class="icon-btn" id="copy-md" title="Copy what you're looking at as Markdown, ready to paste into a coding agent">Copy for agent</button>
+    <button class="icon-btn" id="theme" title="Toggle light/dark">Theme</button>
+  </header>
+  <div class="main">
+    <aside class="list">
+      <div class="list-tools">
+        <input type="search" id="search" placeholder="Filter tests by name, file or class…" aria-label="Filter tests">
+        <div class="chips" id="filters">
+          <button class="chip" data-filter="failed" aria-pressed="false">Failed</button>
+          <button class="chip" data-filter="slow" aria-pressed="false">Slowest 10%</button>
+          <button class="chip" data-filter="warnings" aria-pressed="false">Low samples</button>
+          <button class="chip" data-sort="name" aria-pressed="false">Sort by name</button>
+        </div>
+      </div>
+      <div class="tree" id="tree" role="tree"></div>
+    </aside>
+    <section class="detail"><div class="detail-inner" id="detail"></div></section>
+  </div>
+</div>
+<div id="tooltip"></div>
+<div class="toast" id="toast"></div>
+<script id="profile-data" type="application/json">/*__FLAKYTEST_PROFILE__*/null</script>
+<script>
+"use strict";
+const P = JSON.parse(document.getElementById("profile-data").textContent);
+
+const FAMILIES = {
+  db: ["db", "migrations", "db_schema", "fixture_loading"],
+  external: ["network", "cache", "subprocess", "browser"],
+  code: ["test_code", "app_code"],
+  waiting: ["sleep", "waiting"],
+  data: ["factories", "mocking"],
+  runtime: ["imports", "gc", "copying", "serialization", "template", "logging"],
+  hashing: ["password_hashing"],
+  other: ["pytest", "library", "unsampled"],
+};
+const FAMILY_ORDER = ["db", "external", "code", "waiting", "data", "runtime", "hashing", "other"];
+const CATEGORY_FAMILY = {};
+const CATEGORY_ORDER = [];
+for (const f of FAMILY_ORDER) for (const c of FAMILIES[f]) { CATEGORY_FAMILY[c] = f; CATEGORY_ORDER.push(c); }
+const LABELS = {
+  gc: "garbage collection", imports: "imports", password_hashing: "password hashing", migrations: "migrations",
+  db_schema: "DB schema / flush", fixture_loading: "fixture loading", browser: "browser", subprocess: "subprocesses",
+  db: "database", cache: "cache", network: "network", sleep: "sleep", waiting: "waiting", template: "templates",
+  factories: "test data factories", mocking: "mocking", copying: "deepcopy", serialization: "serialization",
+  logging: "logging", test_code: "test code", app_code: "app code", pytest: "pytest", library: "libraries",
+  unsampled: "not sampled",
+};
+const DESCRIPTIONS = {
+  db: "Running SQL: ORM, drivers, connections.", migrations: "Applying migrations.",
+  db_schema: "Creating/flushing tables (TransactionTestCase, create_all).", fixture_loading: "Loading fixture files.",
+  network: "Sockets and HTTP clients.", cache: "Redis / Memcached.", subprocess: "Starting and waiting for processes.",
+  browser: "Selenium / Playwright.", sleep: "time.sleep / asyncio.sleep.", waiting: "Blocked on threads, queues, select().",
+  test_code: "Your test code itself.", app_code: "Your application code itself.", factories: "factory_boy, model_bakery, Faker, Hypothesis.",
+  mocking: "unittest.mock, freezegun, responses.", imports: "Importing modules.", gc: "Garbage collector pauses.",
+  copying: "copy.deepcopy (e.g. setUpTestData).", serialization: "JSON, YAML, pydantic.", template: "Template rendering.",
+  logging: "Formatting and emitting log records.", password_hashing: "PBKDF2, bcrypt, argon2.",
+  pytest: "pytest and plugin overhead.", library: "Other library code.", unsampled: "Time the profiler didn't sample (too short).",
+};
+const SHADES = [1, 0.72, 0.5, 0.34, 0.22];
+function catColor(c) {
+  const f = CATEGORY_FAMILY[c] || "other";
+  const i = Math.max(0, FAMILIES[f].indexOf(c));
+  const a = SHADES[Math.min(i, SHADES.length - 1)];
+  return a === 1 ? `var(--f-${f})` : `color-mix(in srgb, var(--f-${f}) ${Math.round(a * 100)}%, var(--surface))`;
+}
+const catLabel = c => LABELS[c] || c.replace(/_/g, " ");
+const catRank = c => { const i = CATEGORY_ORDER.indexOf(c); return i < 0 ? 999 : i; };
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+function fmt(s) {
+  if (s >= 60) return (s / 60).toFixed(1) + " min";
+  if (s >= 10) return s.toFixed(1) + "s";
+  if (s >= 1) return s.toFixed(2) + "s";
+  if (s >= 0.001) return Math.round(s * 1000) + "ms";
+  if (s > 0) return "<1ms";
+  return "0ms";
+}
+const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) + "%" : "–");
+const plural = (n, w) => `${n.toLocaleString()} ${n === 1 ? w : w.endsWith("y") ? w.slice(0, -1) + "ies" : w + "s"}`;
+
+const tests = P.tests;
+const testsById = new Map(tests.map(t => [t.nodeid, t]));
+const frames = P.frames;
+const stackNodes = P.stacks;
+const stackCats = P.stack_categories || {};
+const sources = P.sources || {};
+const pathCache = new Map();
+function stackPath(node) {
+  let cached = pathCache.get(node);
+  if (cached) return cached;
+  const [parent, frame] = stackNodes[node];
+  cached = parent >= 0 ? stackPath(parent).concat([frame]) : [frame];
+  pathCache.set(node, cached);
+  return cached;
+}
+const testFunc = t => t.name.split("[")[0];
+
+// Build the group tree: file -> class -> test
+function buildGroups() {
+  const root = { id: "", label: "All tests", type: "root", children: new Map(), tests: [] };
+  for (const t of tests) {
+    root.tests.push(t);
+    let file = root.children.get(t.file);
+    if (!file) { file = { id: t.file, label: t.file, type: "file", children: new Map(), tests: [] }; root.children.set(t.file, file); }
+    file.tests.push(t);
+    let parent = file;
+    if (t.class) {
+      const cid = t.file + "::" + t.class;
+      let cls = file.children.get(cid);
+      if (!cls) { cls = { id: cid, label: t.class, type: "class", children: new Map(), tests: [] }; file.children.set(cid, cls); }
+      cls.tests.push(t);
+      parent = cls;
+    }
+    parent.children.set(t.nodeid, { id: t.nodeid, label: t.name, type: "test", test: t, tests: [t], children: new Map() });
+  }
+  const finish = g => {
+    g.duration = g.tests.reduce((a, t) => a + t.duration, 0);
+    g.categories = sumCategories(g.tests);
+    g.failed = g.tests.some(t => t.outcome === "failed" || t.outcome === "error");
+    for (const c of g.children.values()) finish(c);
+  };
+  finish(root);
+  return root;
+}
+function sumCategories(list) {
+  const out = {};
+  for (const t of list) for (const [c, s] of Object.entries(t.categories)) out[c] = (out[c] || 0) + s;
+  return out;
+}
+const ROOT = buildGroups();
+const groupIndex = new Map();
+(function index(g) { groupIndex.set(g.id, g); for (const c of g.children.values()) index(c); })(ROOT);
+
+const state = { selected: "", expanded: new Set(), query: "", filters: new Set(), sortByName: false, hideFramework: true };
+const slowCut = (() => { const d = tests.map(t => t.duration).sort((a, b) => b - a); return d.length ? d[Math.max(0, Math.ceil(d.length * 0.1) - 1)] : 0; })();
+
+function matches(t) {
+  const q = state.query;
+  if (q && !t.nodeid.toLowerCase().includes(q)) return false;
+  if (state.filters.has("failed") && !(t.outcome === "failed" || t.outcome === "error")) return false;
+  if (state.filters.has("slow") && t.duration < slowCut) return false;
+  if (state.filters.has("warnings") && !t.warnings.length) return false;
+  return true;
+}
+
+function stackBar(categories, total, thin) {
+  const entries = Object.entries(categories).filter(([, s]) => s > 0).sort((a, b) => catRank(a[0]) - catRank(b[0]));
+  const sum = total || entries.reduce((a, [, s]) => a + s, 0) || 1;
+  return `<div class="stack${thin ? " thin" : ""}">` + entries.map(([c, s]) =>
+    `<div class="${c === "unsampled" ? "unsampled" : ""}" style="flex:${s / sum};background:${catColor(c)}" data-tip="${esc(catLabel(c))}: ${fmt(s)} (${pct(s, sum)})"></div>`).join("") + `</div>`;
+}
+
+function renderTree() {
+  const el = document.getElementById("tree");
+  const rows = [];
+  const filtering = state.query || state.filters.size;
+  const maxDuration = Math.max(...[...ROOT.children.values()].map(g => g.duration), 0.000001);
+  const sortChildren = g => [...g.children.values()].sort((a, b) => state.sortByName ? a.label.localeCompare(b.label) : b.duration - a.duration);
+  const visibleTests = g => g.tests.filter(matches);
+  rows.push(rowHtml(ROOT, 0, false, ROOT.duration, ROOT.duration));
+  const walk = (g, depth) => {
+    for (const c of sortChildren(g)) {
+      const vis = visibleTests(c);
+      if (!vis.length) continue;
+      const open = c.type !== "test" && (filtering || state.expanded.has(c.id));
+      const dur = vis.reduce((a, t) => a + t.duration, 0);
+      rows.push(rowHtml(c, depth, open, dur, c.type === "test" ? (slowestTest || 1) : maxDuration));
+      if (open) walk(c, depth + 1);
+    }
+  };
+  walk(ROOT, 1);
+  el.innerHTML = rows.join("") || `<p class="empty" style="padding:12px">No tests match.</p>`;
+}
+const slowestTest = Math.max(...tests.map(t => t.duration), 0);
+function rowHtml(g, depth, open, duration, scale) {
+  const twisty = g.type === "test" || g.type === "root" ? "" : (open ? "▾" : "▸");
+  const dot = g.type === "test" ? `<span class="dot o-${g.test.outcome}" title="${g.test.outcome}"></span>` : (g.failed ? `<span class="dot o-failed" title="has failures"></span>` : "");
+  const count = g.type !== "test" ? ` <small>${g.tests.length}</small>` : "";
+  const warn = g.type === "test" && g.test.warnings.length ? ` <small title="few or no samples">⚠</small>` : "";
+  const width = Math.max(2, Math.min(100, (duration / (scale || 1)) * 100));
+  const cats = g.type === "test" ? g.test.categories : g.categories;
+  return `<div class="row${g.type === "root" ? " root" : ""}${state.selected === g.id ? " selected" : ""}" role="treeitem" style="--depth:${depth}" data-id="${esc(g.id)}" data-type="${g.type}">
+    <span class="twisty">${twisty}</span><span class="name" title="${esc(g.id || "All tests")}">${dot}${esc(g.label)}${count}${warn}</span><span class="time">${fmt(duration)}</span>
+    <div class="minibar"><div style="width:${width}%">${stackBar(cats, 0, true)}</div></div></div>`;
+}
+
+function aggregate(list) {
+  const segs = new Map(), lines = new Map(), fixtures = new Map();
+  const phases = { setup: 0, call: 0, teardown: 0 };
+  let queries = 0, qtime = 0, samples = 0, shared = 0;
+  const dups = [];
+  for (const t of list) {
+    for (const p in phases) phases[p] += t.phases[p] || 0;
+    samples += Object.values(t.samples).reduce((a, b) => a + b, 0);
+    shared += t.shared_fixture_time || 0;
+    for (const s of t.segments) {
+      const k = s.phase + "\u0000" + s.label;
+      const e = segs.get(k) || { phase: s.phase, label: s.label, frame: s.frame, seconds: 0, tests: 0 };
+      e.seconds += s.seconds; e.tests++; segs.set(k, e);
+    }
+    for (const h of t.hot_lines) {
+      const e = lines.get(h.frame) || { frame: h.frame, seconds: 0, categories: {} };
+      e.seconds += h.seconds;
+      for (const [c, s] of Object.entries(h.categories)) e.categories[c] = (e.categories[c] || 0) + s;
+      lines.set(h.frame, e);
+    }
+    for (const f of t.fixtures) {
+      const k = f.name + "\u0000" + f.scope;
+      const e = fixtures.get(k) || { name: f.name, scope: f.scope, calls: 0, total: 0 };
+      e.calls++; e.total += f.duration; fixtures.set(k, e);
+    }
+    if (t.db) {
+      queries += t.db.queries; qtime += t.db.time;
+      for (const d of t.db.duplicates) dups.push({ ...d, test: t });
+    }
+  }
+  dups.sort((a, b) => b.count - a.count);
+  return {
+    phases, samples, shared, queries, qtime, dups,
+    segments: [...segs.values()].sort((a, b) => b.seconds - a.seconds),
+    lines: [...lines.values()].sort((a, b) => b.seconds - a.seconds),
+    fixtures: [...fixtures.values()].sort((a, b) => b.total - a.total),
+  };
+}
+
+function buildCallTree(list, hideFramework) {
+  const root = { frame: null, seconds: 0, self: 0, cats: {}, children: new Map() };
+  for (const t of list) {
+    for (const [phase, stacks] of Object.entries(t.stacks)) {
+      const total = t.samples[phase];
+      if (!total) continue;
+      for (const [node, count] of stacks) {
+        const secs = (count / total) * t.phases[phase];
+        const cat = stackCats[node] || "library";
+        let path = stackPath(node);
+        if (hideFramework) { const vis = path.filter(f => frames[f][3] !== "framework" && frames[f][3] !== "native"); path = vis.length ? vis : path.slice(-1); }
+        root.seconds += secs;
+        root.cats[cat] = (root.cats[cat] || 0) + secs;
+        let n = root;
+        for (const f of path) {
+          let c = n.children.get(f);
+          if (!c) { c = { frame: f, seconds: 0, self: 0, cats: {}, children: new Map() }; n.children.set(f, c); }
+          c.seconds += secs;
+          c.cats[cat] = (c.cats[cat] || 0) + secs;
+          n = c;
+        }
+        n.self += secs;
+      }
+    }
+  }
+  return root;
+}
+const dominant = cats => Object.entries(cats).sort((a, b) => b[1] - a[1])[0]?.[0] || "library";
+
+function hotFunctions(list, hideFramework) {
+  const self = new Map(), total = new Map();
+  for (const t of list) for (const [phase, stacks] of Object.entries(t.stacks)) {
+    const n = t.samples[phase]; if (!n) continue;
+    for (const [node, count] of stacks) {
+      const secs = (count / n) * t.phases[phase];
+      let path = stackPath(node);
+      if (hideFramework) { const vis = path.filter(f => frames[f][3] !== "framework" && frames[f][3] !== "native"); path = vis.length ? vis : path.slice(-1); }
+      const leaf = frames[path[path.length - 1]];
+      const key = leaf[0] + "\u0000" + leaf[1];
+      self.set(key, (self.get(key) || 0) + secs);
+      for (const k of new Set(path.map(f => frames[f][0] + "\u0000" + frames[f][1]))) total.set(k, (total.get(k) || 0) + secs);
+    }
+  }
+  return [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([k, s]) => { const [path, fn] = k.split("\u0000"); return { path, fn, self: s, total: total.get(k) }; });
+}
+
+function legendHtml(categories, total) {
+  const all = Object.entries(categories).filter(([, s]) => s > 0).sort((a, b) => b[1] - a[1]);
+  if (!all.length) return `<p class="empty">No samples.</p>`;
+  const entries = all.length > 6 ? all.filter(([, s], i) => i < 4 || s >= 0.005 * total) : all;
+  const rest = all.slice(entries.length);
+  const restTime = rest.reduce((a, [, s]) => a + s, 0);
+  const max = all[0][1];
+  return `<div class="legend">` + entries.map(([c, s]) => `
+    <span class="sw ${c === "unsampled" ? "unsampled" : ""}" style="background:${catColor(c)}"></span>
+    <span title="${esc(DESCRIPTIONS[c] || "")}">${esc(catLabel(c))}</span>
+    <span class="bar"><div style="width:${(s / max) * 100}%;background:${catColor(c)}"></div></span>
+    <span class="num">${fmt(s)} · ${pct(s, total)}</span>`).join("") + `</div>` +
+    (rest.length ? `<p class="why" style="margin:6px 0 0" title="${esc(rest.map(([c, s]) => catLabel(c) + " " + fmt(s)).join(", "))}">+ ${rest.length} smaller: ${esc(rest.map(([c]) => catLabel(c)).join(", "))} (${fmt(restTime)})</p>` : "");
+}
+
+function insightHtml(i) {
+  const locs = (i.locations || []).slice(0, 5).map(l => {
+    const src = sources[l.frame];
+    return `<li><code>${esc(l.location)}</code> in <code>${esc(l.function)}</code> · ${fmt(l.seconds)}${src ? `<div class="code">${esc(src)}</div>` : ""}</li>`;
+  }).join("");
+  const testLinks = (i.tests || []).slice(0, 8).map(n => `<a href="#" data-goto="${esc(n)}">${esc(n.split("::").slice(-1)[0])}</a>`).join(", ");
+  const more = (i.tests || []).length > 8 ? ` and ${i.tests.length - 8} more` : "";
+  return `<div class="insight ${esc(i.severity)}">
+    <h3><span class="sev ${esc(i.severity)}">${esc(i.severity)}</span>${esc(i.title)}<span class="impact">saves ~${fmt(i.impact)} per run</span></h3>
+    <p>${esc(i.summary)}</p>
+    <p><span class="label">Fix:</span> ${esc(i.fix)}</p>
+    ${i.safety ? `<p><span class="label">Keep it correct:</span> ${esc(i.safety)}</p>` : ""}
+    ${locs ? `<details open><summary>Where in your code</summary><ul>${locs}</ul></details>` : ""}
+    ${i.evidence && i.evidence.length ? `<details><summary>Evidence</summary><ul>${i.evidence.map(e => `<li class="code">${esc(e)}</li>`).join("")}</ul></details>` : ""}
+    ${testLinks ? `<p class="why">Tests: ${testLinks}${more}</p>` : ""}
+    ${i.docs ? `<p><a href="${esc(i.docs)}" target="_blank" rel="noopener">Docs ↗</a></p>` : ""}
+  </div>`;
+}
+
+function whyText(t) {
+  const cats = Object.entries(t.categories).filter(([c]) => c !== "unsampled").sort((a, b) => b[1] - a[1]);
+  const parts = [];
+  if (cats.length) parts.push(`${catLabel(cats[0][0])} ${pct(cats[0][1], t.duration)}`);
+  else parts.push("no samples");
+  if (t.segments.length) parts.push(`${t.segments[0].label} (${t.segments[0].phase})`);
+  if ((t.shared_fixture_time || 0) >= 0.05) parts.push(`incl. ${fmt(t.shared_fixture_time)} shared fixture setup`);
+  if (t.db && t.db.queries) parts.push(`${t.db.queries} queries`);
+  return parts.join(" · ");
+}
+
+function testsTable(list, limit) {
+  const rows = [...list].sort((a, b) => b.duration - a.duration).slice(0, limit);
+  return `<table><thead><tr><th>Test</th><th class="num">Time</th><th>Breakdown</th><th>Why</th></tr></thead><tbody>` +
+    rows.map(t => `<tr class="link" data-goto="${esc(t.nodeid)}"><td><span class="dot o-${t.outcome}"></span>${esc(t.class ? t.class + "::" + t.name : t.name)}<div class="why mono" style="font-size:11.5px">${esc(t.file)}</div></td>
+      <td class="num">${fmt(t.duration)}</td><td style="min-width:120px">${stackBar(t.categories, t.duration, true)}</td><td class="why">${esc(whyText(t))}</td></tr>`).join("") + `</tbody></table>`;
+}
+
+function segmentsHtml(segments, total) {
+  if (!segments.length) return `<p class="empty">No samples.</p>`;
+  return `<table><thead><tr><th>Phase</th><th>What</th><th class="num">Time</th><th class="num">Share</th></tr></thead><tbody>` +
+    segments.slice(0, 12).map(s => {
+      const f = s.frame != null ? frames[s.frame] : null;
+      const loc = f ? `<div class="why mono" style="font-size:11.5px">${esc(f[0])}:${f[2]}</div>` : "";
+      return `<tr><td>${esc(s.phase)}</td><td>${esc(s.label)}${s.tests > 1 ? ` <span class="pill">${s.tests} tests</span>` : ""}${loc}</td><td class="num">${fmt(s.seconds)}</td><td class="num">${pct(s.seconds, total)}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+
+function hotLinesHtml(lines) {
+  if (!lines.length) return `<p class="empty">No samples in your code.</p>`;
+  return `<table><thead><tr><th>Line</th><th class="num">Time</th><th>Mostly</th></tr></thead><tbody>` +
+    lines.slice(0, 12).map(l => {
+      const f = frames[l.frame];
+      const top = Object.entries(l.categories).sort((a, b) => b[1] - a[1]).slice(0, 2);
+      return `<tr><td><code>${esc(f[0])}:${f[2]}</code> <span class="why">in ${esc(f[1])}</span>${sources[l.frame] ? `<div class="code">${esc(sources[l.frame])}</div>` : ""}</td>
+        <td class="num">${fmt(l.seconds)}</td><td>${top.map(([c, s]) => `<span class="pill"><span class="dot" style="background:${catColor(c)}"></span>${esc(catLabel(c))} ${pct(s, l.seconds)}</span>`).join("")}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+}
+
+function phaseBarHtml(phases) {
+  const total = phases.setup + phases.call + phases.teardown || 1;
+  return `<div class="phasebar">` + ["setup", "call", "teardown"].map(p => phases[p] > 0 ?
+    `<div class="ph-${p}" style="flex:${phases[p] / total}" data-tip="${p}: ${fmt(phases[p])} (${pct(phases[p], total)})">${phases[p] / total >= 0.12 ? `${p} ${fmt(phases[p])}` : ""}</div>` : "").join("") + `</div>
+    <p class="why" style="margin:6px 0 0">setup ${fmt(phases.setup)} · call ${fmt(phases.call)} · teardown ${fmt(phases.teardown)}</p>`;
+}
+
+function callTreeSection(list) {
+  return `<h2>Call tree</h2>
+    <div class="toolbar"><label><input type="checkbox" id="hide-fw" ${state.hideFramework ? "checked" : ""}> Hide pytest and unittest internals</label>
+    <span>Time is estimated from samples and adds up to each phase's measured duration.</span></div>
+    <div class="card calltree" id="calltree"></div>`;
+}
+
+function renderCallTree(list) {
+  const el = document.getElementById("calltree");
+  if (!el) return;
+  const root = buildCallTree(list, state.hideFramework);
+  if (!root.seconds) { el.innerHTML = `<p class="empty">No samples for this selection${P.run.profiler.backend === "none" ? " (no profiler ran)" : ""}.</p>`; return; }
+  const total = root.seconds;
+  const open = new Set();
+  // Expand the hottest path while it holds at least 10% of the time
+  (function expand(n, depth) {
+    const kids = [...n.children.values()].sort((a, b) => b.seconds - a.seconds);
+    if (!kids.length || depth > 30) return;
+    for (const k of kids) if (k.seconds / total >= 0.1) { open.add(k); expand(k, depth + 1); }
+  })(root, 0);
+  const rows = [];
+  const draw = (n, d) => {
+    const kids = [...n.children.values()].sort((a, b) => b.seconds - a.seconds);
+    for (const k of kids) {
+      if (k.seconds / total < 0.002 && d > 0) continue;
+      const f = frames[k.frame];
+      const cat = dominant(k.cats);
+      const has = k.children.size > 0;
+      const isOpen = open.has(k);
+      rows.push({ k, d, html: `<div class="ct-row kind-${f[3]}" style="--d:${d}">
+        <span class="t">${fmt(k.seconds)}</span><span class="p">${pct(k.seconds, total)}</span>
+        <span class="ct-fn"><span class="tw" data-node>${has ? (isOpen ? "▾" : "▸") : ""}</span><span class="cat" style="background:${catColor(cat)}" data-tip="mostly ${esc(catLabel(cat))}"></span><span class="fn">${esc(f[1])}</span><span class="loc">${esc(f[0])}:${f[2]}</span></span>
+        ${sources[k.frame] ? `<span class="ct-src" style="--d:${d}">${esc(sources[k.frame])}</span>` : ""}</div>` });
+      if (has && isOpen) draw(k, d + 1);
+    }
+  };
+  const redraw = () => {
+    rows.length = 0;
+    draw(root, 0);
+    el.innerHTML = rows.map((r, i) => r.html.replace("data-node", `data-node="${i}"`)).join("");
+    el.querySelectorAll("[data-node]").forEach(tw => tw.addEventListener("click", () => {
+      const r = rows[+tw.dataset.node];
+      if (!r || !r.k.children.size) return;
+      if (open.has(r.k)) open.delete(r.k); else open.add(r.k);
+      redraw();
+    }));
+  };
+  redraw();
+}
+
+function hotFunctionsHtml(list) {
+  const fns = hotFunctions(list, state.hideFramework);
+  if (!fns.length) return "";
+  return `<h2>Hot functions</h2><div class="card"><table><thead><tr><th>Function</th><th class="num">Self</th><th class="num">Total</th></tr></thead><tbody>` +
+    fns.map(f => `<tr><td><code>${esc(f.fn)}</code> <span class="why mono" style="font-size:11.5px">${esc(f.path)}</span></td><td class="num">${fmt(f.self)}</td><td class="num">${fmt(f.total)}</td></tr>`).join("") +
+    `</tbody></table><p class="why" style="margin:8px 0 0">Self: samples taken in the function itself. Total: samples with the function anywhere on the stack.</p></div>`;
+}
+
+function fixturesHtml(all, title) {
+  const fixtures = all.filter(f => f.total >= 0.001);
+  const tiny = all.length - fixtures.length;
+  if (!fixtures.length) return tiny ? `<h2>${title}</h2><p class="why">${tiny} fixtures, all under 1ms.</p>` : "";
+  return `<h2>${title}</h2><div class="card"><table><thead><tr><th>Fixture</th><th>Scope</th><th class="num">Calls</th><th class="num">Total</th><th class="num">Mean</th></tr></thead><tbody>` +
+    fixtures.slice(0, 15).map(f => `<tr><td><code>${esc(f.name)}</code></td><td>${esc(f.scope)}</td><td class="num">${f.calls}</td><td class="num">${fmt(f.total)}</td><td class="num">${fmt(f.total / f.calls)}</td></tr>`).join("") +
+    `</tbody></table><p class="why" style="margin:8px 0 0">Exact setup times${tiny ? `, ${tiny} more under 1ms not shown` : ""}. Class, module and session fixtures are paid by the first test that needs them.</p></div>`;
+}
+
+function dbHtml(agg) {
+  if (!agg.queries) return "";
+  const dups = agg.dups.slice(0, 8).map(d => `<tr><td class="num">${d.count}×</td><td class="code">${esc(d.sql)}</td><td><a href="#" data-goto="${esc(d.test.nodeid)}">${esc(d.test.name)}</a></td></tr>`).join("");
+  return `<h2>Database</h2><div class="card"><p style="margin:0 0 8px">${plural(agg.queries, "query")}, ${fmt(agg.qtime)} in the database driver.</p>
+    ${dups ? `<p class="why" style="margin:0 0 6px">Repeated queries (likely N+1):</p><table><tbody>${dups}</tbody></table>` : `<p class="why" style="margin:0">No query repeated 3 or more times.</p>`}</div>`;
+}
+
+function renderOverview() {
+  const s = P.summary, run = P.run;
+  const total = s.test_time;
+  const tl = s.timeline || {};
+  const tlTotal = Object.values(tl).reduce((a, b) => a + b, 0) || 1;
+  const tlColors = { startup: "var(--f-runtime)", collection: "color-mix(in srgb, var(--f-runtime) 55%, var(--surface))", tests: "var(--f-code)", between_tests: "var(--f-other)", session_teardown: "color-mix(in srgb, var(--f-db) 60%, var(--surface))", other: "var(--line-strong)" };
+  const agg = aggregate(tests);
+  const imports = s.imports || {};
+  const importsHtml = ["startup", "collection"].filter(b => (imports[b] || []).length).map(b =>
+    `<p class="why" style="margin:6px 0 0">Slowest imports during ${b}: ${imports[b].slice(0, 5).map(m => `<code>${esc(m.module)}</code> ${fmt(m.seconds)}`).join(", ")}</p>`).join("");
+  return `
+    <h1>${plural(s.tests, "test")} in ${fmt(run.duration)}</h1>
+    <p class="sub">${esc(run.environment.name)} · Python ${esc(run.python.version)} · ${esc(run.platform.system)} ${esc(run.platform.machine)}, ${run.platform.cpu_count} CPUs · ${run.workers > 1 ? run.workers + " xdist workers · " : ""}${esc(run.started_at.replace("T", " ").replace("Z", " UTC"))}</p>
+    ${P.warnings.map(w => `<div class="warn">${esc(w.message)}</div>`).join("")}
+    <div class="tiles">
+      <div class="tile"><div class="label">Wall time</div><div class="value">${fmt(run.duration)}</div><div class="hint">start to finish</div></div>
+      <div class="tile"><div class="label">Test time</div><div class="value">${fmt(total)}</div><div class="hint">sum of setup + call + teardown</div></div>
+      <div class="tile"><div class="label">Outcomes</div><div class="value">${s.passed.toLocaleString()} <span style="font-size:14px;color:var(--good-ink)">passed</span></div><div class="hint">${s.failed} failed · ${s.errors} errors · ${s.skipped} skipped</div></div>
+      <div class="tile"><div class="label">Samples</div><div class="value">${run.profiler.samples.toLocaleString()}</div><div class="hint">${run.profiler.backend === "none" ? "no profiler" : `${esc(run.profiler.backend)} @ ${run.profiler.rate} Hz`}</div></div>
+    </div>
+    <h2>Session timeline</h2>
+    <div class="card"><div class="phasebar">${Object.entries(tl).map(([k, v]) => `<div style="flex:${v / tlTotal};background:${tlColors[k] || "var(--line-strong)"};color:var(--ink)" data-tip="${esc(k.replace(/_/g, " "))}: ${fmt(v)}">${v / tlTotal >= 0.12 ? `${esc(k.replace(/_/g, " "))} ${fmt(v)}` : ""}</div>`).join("")}</div>
+      <p class="why" style="margin:6px 0 0">${Object.entries(tl).map(([k, v]) => `${esc(k.replace(/_/g, " "))} ${fmt(v)}`).join(" · ")}</p>${importsHtml}</div>
+    <h2>Where test time goes</h2>
+    <div class="card">${stackBar(s.categories, total)}${legendHtml(s.categories, total)}
+      <p class="why" style="margin:10px 0 0">Phases: setup ${fmt(s.phases.setup || 0)} (${pct(s.phases.setup || 0, total)}) · call ${fmt(s.phases.call || 0)} · teardown ${fmt(s.phases.teardown || 0)}</p></div>
+    <h2>Fix next</h2>
+    ${P.insights.length ? P.insights.map(insightHtml).join("") : `<p class="empty">Nothing stands out. Start with the slowest tests below.</p>`}
+    <h2>Slowest tests</h2>
+    <div class="card">${testsTable(tests, 20)}</div>
+    ${fixturesHtml((P.fixtures || []).map(f => ({ ...f })), "Slowest fixtures")}
+    ${dbHtml(agg)}
+    ${callTreeSection(tests)}
+    ${hotFunctionsHtml(tests)}`;
+}
+
+function renderGroup(g) {
+  const list = g.tests;
+  const agg = aggregate(list);
+  const total = g.duration;
+  const related = P.insights.filter(i => (i.tests || []).some(n => list.some(t => t.nodeid === n)));
+  return `
+    <h1>${esc(g.label)}</h1>
+    <p class="sub">${g.type === "class" ? esc(g.id.split("::")[0]) + " · " : ""}${plural(list.length, "test")} · ${fmt(total)} test time · ${plural(agg.samples, "sample")}</p>
+    <div class="tiles">
+      <div class="tile"><div class="label">Test time</div><div class="value">${fmt(total)}</div><div class="hint">${pct(total, P.summary.test_time)} of the suite</div></div>
+      <div class="tile"><div class="label">Slowest test</div><div class="value">${fmt(Math.max(...list.map(t => t.duration)))}</div><div class="hint">mean ${fmt(total / list.length)}</div></div>
+      <div class="tile"><div class="label">Setup / call / teardown</div><div class="value" style="font-size:16px">${fmt(agg.phases.setup)} / ${fmt(agg.phases.call)} / ${fmt(agg.phases.teardown)}</div></div>
+      ${agg.queries ? `<div class="tile"><div class="label">Queries</div><div class="value">${agg.queries.toLocaleString()}</div><div class="hint">${fmt(agg.qtime)}</div></div>` : ""}
+    </div>
+    <h2>Where the time goes</h2>
+    <div class="card">${phaseBarHtml(agg.phases)}<div style="height:10px"></div>${stackBar(g.categories, total)}${legendHtml(g.categories, total)}</div>
+    ${related.length ? `<h2>Fix next</h2>${related.map(insightHtml).join("")}` : ""}
+    <h2>Tests</h2><div class="card">${testsTable(list, 50)}</div>
+    <h2>Pieces of work</h2><div class="card">${segmentsHtml(agg.segments, total)}</div>
+    <h2>Hot lines in your code</h2><div class="card">${hotLinesHtml(agg.lines)}</div>
+    ${fixturesHtml(agg.fixtures, "Fixtures")}
+    ${dbHtml(agg)}
+    ${callTreeSection(list)}
+    ${hotFunctionsHtml(list)}`;
+}
+
+function renderTest(t) {
+  const agg = aggregate([t]);
+  const samples = agg.samples;
+  const related = P.insights.filter(i => (i.tests || []).includes(t.nodeid));
+  const warn = t.warnings.length ? `<div class="warn">${samples === 0 ? "This test got no samples" : `Only ${samples} samples`} at ${P.run.profiler.rate} Hz, so the breakdown below is ${samples === 0 ? "missing" : "rough"}. Rerun it with <code>--flakytest-rate ${Math.min(20000, P.run.profiler.rate * 5)}</code> for detail.</div>` : "";
+  const shared = (t.shared_fixture_time || 0) >= 0.01 ? `<div class="warn" style="border-color:var(--line-strong);background:var(--surface-2)">Includes ${fmt(t.shared_fixture_time)} of class/module/session fixture setup that this test triggered first; the tests after it reuse it.</div>` : "";
+  return `
+    <h1><span class="dot o-${t.outcome}"></span>${esc(t.class ? t.class + "::" + t.name : t.name)}</h1>
+    <p class="sub mono">${esc(t.nodeid)}</p>
+    <p class="sub">${esc(t.outcome)} · ${fmt(t.duration)} · ${plural(samples, "sample")}${t.worker ? " · " + esc(t.worker) : ""}</p>
+    ${warn}${shared}
+    <h2>Where the time goes</h2>
+    <div class="card">${phaseBarHtml(t.phases)}<div style="height:10px"></div>${stackBar(t.categories, t.duration)}${legendHtml(t.categories, t.duration)}</div>
+    ${related.length ? `<h2>Fix next</h2>${related.map(insightHtml).join("")}` : ""}
+    <h2>Pieces of work</h2><div class="card">${segmentsHtml(agg.segments, t.duration)}</div>
+    <h2>Hot lines in your code</h2><div class="card">${hotLinesHtml(agg.lines)}</div>
+    ${fixturesHtml(agg.fixtures, "Fixtures this test set up")}
+    ${dbHtml(agg)}
+    ${callTreeSection([t])}
+    ${hotFunctionsHtml([t])}
+    ${t.longrepr ? `<h2>Failure</h2><pre class="failure">${esc(t.longrepr)}</pre>` : ""}`;
+}
+
+function currentList() {
+  const g = groupIndex.get(state.selected) || ROOT;
+  return g.tests;
+}
+
+function renderDetail() {
+  const el = document.getElementById("detail");
+  const g = groupIndex.get(state.selected) || ROOT;
+  el.innerHTML = g.type === "root" ? renderOverview() : g.type === "test" ? renderTest(g.test) : renderGroup(g);
+  renderCallTree(g.tests);
+  const fw = document.getElementById("hide-fw");
+  if (fw) fw.addEventListener("change", () => { state.hideFramework = fw.checked; renderDetail(); });
+  el.parentElement.scrollTop = 0;
+}
+
+function select(id, { expand = true, push = true } = {}) {
+  if (!groupIndex.has(id)) id = "";
+  state.selected = id;
+  if (expand && id) {
+    const t = testsById.get(id);
+    const file = t ? t.file : id.split("::")[0];
+    state.expanded.add(file);
+    if (t && t.class) state.expanded.add(t.file + "::" + t.class);
+  }
+  if (push) history.replaceState(null, "", id ? "#" + encodeURIComponent(id) : "#");
+  renderTree();
+  renderDetail();
+  const row = document.querySelector(`.row[data-id="${CSS.escape(id)}"]`);
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+
+function markdownFor() {
+  const g = groupIndex.get(state.selected) || ROOT;
+  const list = g.tests;
+  const total = list.reduce((a, t) => a + t.duration, 0);
+  const cats = Object.entries(sumCategories(list)).sort((a, b) => b[1] - a[1]);
+  const agg = aggregate(list);
+  const lines = [`# flakytest: ${g.type === "root" ? "test suite" : g.id}`, "",
+    `${list.length} tests, ${fmt(total)} test time. Run ${P.run.id} on ${P.run.environment.name}, Python ${P.run.python.version}, ${P.run.profiler.backend} @ ${P.run.profiler.rate} Hz.`, "",
+    "## Where the time goes", ...cats.map(([c, s]) => `- ${catLabel(c)}: ${fmt(s)} (${pct(s, total)})`), ""];
+  if (agg.segments.length) lines.push("## Pieces of work", ...agg.segments.slice(0, 8).map(s => `- ${s.phase}: ${s.label} ${fmt(s.seconds)}`), "");
+  if (agg.lines.length) lines.push("## Hot lines in project code", ...agg.lines.slice(0, 10).map(l => { const f = frames[l.frame]; return `- ${f[0]}:${f[2]} in ${f[1]} — ${fmt(l.seconds)}${sources[l.frame] ? " — `" + sources[l.frame] + "`" : ""}`; }), "");
+  if (agg.dups.length) lines.push("## Repeated queries", ...agg.dups.slice(0, 5).map(d => `- ${d.count}x in ${d.test.name}: \`${d.sql}\``), "");
+  if (list.length > 1) lines.push("## Slowest tests", ...[...list].sort((a, b) => b.duration - a.duration).slice(0, 15).map(t => `- ${t.nodeid}: ${fmt(t.duration)} (${whyText(t)})`), "");
+  const related = g.type === "root" ? P.insights : P.insights.filter(i => (i.tests || []).some(n => list.some(t => t.nodeid === n)));
+  if (related.length) {
+    lines.push("## Suggested fixes (ranked by estimated savings)");
+    related.forEach((i, n) => {
+      lines.push(`${n + 1}. **${i.title}** (${i.severity}, ~${fmt(i.impact)}/run): ${i.summary}`, `   Fix: ${i.fix}`);
+      if (i.safety) lines.push(`   Keep it correct: ${i.safety}`);
+      if (i.locations && i.locations.length) lines.push(`   Where: ${i.locations.slice(0, 5).map(l => l.location).join(", ")}`);
+    });
+    lines.push("");
+  }
+  lines.push("Verify a change with `flakytest run -- <tests>` and `flakytest compare` (it flags tests whose outcome changed or that stopped running).");
+  return lines.join("\n");
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => { t.style.display = "none"; }, 1800);
+}
+
+function init() {
+  const run = P.run;
+  document.title = `flakytest · ${P.summary.tests} tests · ${fmt(run.duration)}`;
+  document.getElementById("run-meta").textContent = `${run.environment.name} · ${run.id} · ${run.git && run.git.branch ? run.git.branch + " @ " + (run.git.commit_hash || "").slice(0, 8) + (run.git.dirty ? " (dirty)" : "") + " · " : ""}${run.profiler.backend === "none" ? "no profiler" : run.profiler.backend + " " + run.profiler.rate + " Hz"}`;
+  try { const theme = localStorage.getItem("flakytest-theme"); if (theme) document.documentElement.dataset.theme = theme; } catch (e) { /* storage unavailable */ }
+  document.getElementById("theme").addEventListener("click", () => {
+    const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("flakytest-theme", document.documentElement.dataset.theme); } catch (e) { /* storage unavailable */ }
+  });
+  document.getElementById("search").addEventListener("input", e => { state.query = e.target.value.trim().toLowerCase(); renderTree(); });
+  document.getElementById("filters").addEventListener("click", e => {
+    const b = e.target.closest(".chip"); if (!b) return;
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", on);
+    if (b.dataset.sort) state.sortByName = on;
+    else if (on) state.filters.add(b.dataset.filter); else state.filters.delete(b.dataset.filter);
+    renderTree();
+  });
+  document.getElementById("tree").addEventListener("click", e => {
+    const row = e.target.closest(".row"); if (!row) return;
+    const id = row.dataset.id;
+    if (row.dataset.type !== "test" && row.dataset.type !== "root" && (e.target.classList.contains("twisty") || state.selected === id)) {
+      if (state.expanded.has(id)) state.expanded.delete(id); else state.expanded.add(id);
+      if (e.target.classList.contains("twisty")) { renderTree(); return; }
+    } else if (row.dataset.type !== "test") state.expanded.add(id);
+    select(id, { expand: false });
+  });
+  document.getElementById("detail").addEventListener("click", e => {
+    const link = e.target.closest("[data-goto]"); if (!link) return;
+    e.preventDefault(); select(link.dataset.goto);
+  });
+  document.getElementById("copy-md").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(markdownFor()); toast("Copied as Markdown"); }
+    catch (err) { const w = window.open("", "_blank"); if (w) { w.document.body.innerText = markdownFor(); } }
+  });
+  const tip = document.getElementById("tooltip");
+  document.addEventListener("mousemove", e => {
+    const el = e.target.closest("[data-tip]");
+    if (!el) { tip.style.display = "none"; return; }
+    tip.textContent = el.dataset.tip; tip.style.display = "block";
+    const x = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8);
+    tip.style.left = x + "px"; tip.style.top = (e.clientY + 14) + "px";
+  });
+  window.addEventListener("hashchange", () => select(decodeURIComponent(location.hash.slice(1)), { push: false }));
+  const initial = decodeURIComponent(location.hash.slice(1));
+  if (ROOT.children.size <= 3) for (const id of ROOT.children.keys()) state.expanded.add(id);
+  select(initial, { push: false });
+}
+init();
+</script>
+</body>
+</html>

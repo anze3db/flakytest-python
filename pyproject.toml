@@ -2,7 +2,7 @@
 name = "flakytest"
 # CalVer: YYYY.0bN = the Nth beta of YYYY (2026.0b0, 2026.0b1, ...). Bumped by scripts/release.py.
 version = "2026.0b0"
-description = 'Pytest plugin for flakytest.dev'
+description = 'See where your pytest suite spends its time, why, and what to fix first. Flaky test tracking included.'
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -10,7 +10,10 @@ license-files = ["LICENSE.txt"]
 keywords = [
   "test",
   "flaky",
-  "pytest"
+  "pytest",
+  "profiling",
+  "performance",
+  "django",
 ]
 authors = [
   { name = "Anže Pečar", email = "anze@pecar.me" },
@@ -42,6 +45,13 @@ Issues = "https://github.com/anze3db/flakytest-python/issues"
 Source = "https://github.com/anze3db/flakytest-python"
 Mastodon = "https://fosstodon.org/@anze3db"
 Twitter = "https://twitter.com/anze3db"
+
+[project.optional-dependencies]
+# Sampling profiler for Python < 3.15 (3.15+ uses the built-in tachyon profiler)
+py-spy = ["py-spy>=0.4"]
+
+[project.scripts]
+flakytest = "flakytest.cli:main"
 
 [project.entry-points.pytest11]
 flakytest = "flakytest.hook"

@@ -1,0 +1,82 @@
+"""Build plugin records and sample files like the profiler would, without running one."""
+
+import json
+from pathlib import Path
+
+from flakytest.profiling.markers import MARKER_FILENAME, marker_key, marker_name
+
+FROM_CALL = ("/venv/lib/python3.15/site-packages/_pytest/runner.py", "CallInfo.from_call", 341)
+ROOT_FRAMES = (
+    ("/venv/bin/pytest", "<module>", 8),
+    ("/venv/lib/python3.15/site-packages/_pytest/main.py", "pytest_runtestloop", 377),
+)
+
+
+def record(nodeid, *, setup=0.0, call=0.0, teardown=0.0, outcome="passed", fixtures=(), db=None):
+    file, _, rest = nodeid.partition("::")
+    parts = rest.split("::")
+    return {
+        "nodeid": nodeid,
+        "key": marker_key(nodeid),
+        "file": file,
+        "class": parts[0] if len(parts) > 1 else None,
+        "name": parts[-1],
+        "outcome": outcome,
+        "worker": None,
+        "duration": setup + call + teardown,
+        "phases": {"setup": setup, "call": call, "teardown": teardown},
+        "fixtures": list(fixtures),
+        "db": db,
+        "longrepr": None,
+    }
+
+
+def phase_stack(nodeid, phase, *frames):
+    """A sampled stack inside a test phase: pytest frames, the marker, then the given frames."""
+    marker = (MARKER_FILENAME, marker_name(phase, marker_key(nodeid)), 1)
+    return (*ROOT_FRAMES, marker, FROM_CALL, *frames)
+
+
+def write_tachyon_samples(path: Path, stacks, thread="1"):
+    """stacks: [(frames from the root, count)]."""
+    frame_ids: dict = {}
+    out = []
+    for frames, count in stacks:
+        ids = [frame_ids.setdefault(tuple(f), len(frame_ids)) for f in frames]
+        out.append([thread, ids, count])
+    path.write_text(json.dumps({"backend": "tachyon", "frames": [list(f) for f in frame_ids], "stacks": out}))
+    return path
+
+
+def process(tests, samples_file=None, sampled_seconds=0.0, **extra):
+    return {
+        "pid": 1,
+        "worker": None,
+        "backend": "tachyon" if samples_file else "none",
+        "rate": 1000,
+        "backend_error": None,
+        "samples_file": str(samples_file) if samples_file else None,
+        "sampled_seconds": sampled_seconds,
+        "tests": tests,
+        "fixture_users": {},
+        "context": {},
+        **extra,
+    }
+
+
+def run_info(backend="tachyon", rate=1000, duration=10.0, workers=1, cpu_count=8):
+    return {
+        "id": "20261016-000000-abcdef",
+        "started_at": "2026-10-16T00:00:00Z",
+        "duration": duration,
+        "exit_status": "OK",
+        "argv": [],
+        "flakytest_version": "test",
+        "python": {"version": "3.15.0", "implementation": "cpython"},
+        "platform": {"system": "Linux", "release": "6", "machine": "x86_64", "cpu_count": cpu_count},
+        "environment": {"kind": "local", "name": "local:me@laptop", "provider": "local", "details": {}},
+        "git": {},
+        "profiler": {"backend": backend, "rate": rate, "samples": 0, "error": None},
+        "workers": workers,
+        "plugins": [],
+    }
