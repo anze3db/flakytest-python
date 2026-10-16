@@ -28,17 +28,17 @@ def normalize_sql(sql: str) -> str:
 class QueryStats:
     queries: int = 0
     time: float = 0.0
-    statements: Counter[str] = field(default_factory=Counter)
+    statements: Counter[tuple[str, str]] = field(default_factory=Counter)
 
-    def add(self, sql: str, duration: float) -> None:
+    def add(self, sql: str, duration: float, source: str = "django") -> None:
         self.queries += 1
         self.time += duration
-        self.statements[normalize_sql(sql)] += 1
+        self.statements[(source, normalize_sql(sql))] += 1
 
     def as_dict(self) -> dict[str, Any]:
         duplicates = [
-            {"sql": sql, "count": count}
-            for sql, count in self.statements.most_common(5)
+            {"sql": sql, "count": count, "source": source}
+            for (source, sql), count in self.statements.most_common(5)
             if count >= DUPLICATE_THRESHOLD and not sql.upper().startswith(("SAVEPOINT", "RELEASE", "ROLLBACK"))
         ]
         return {"queries": self.queries, "time": round(self.time, 6), "duplicates": duplicates}
@@ -116,4 +116,4 @@ class QueryTracker:
         started = conn.info.get("flakytest_started")
         duration = time.perf_counter() - started.pop() if started else 0.0
         if self.current is not None:
-            self.current.add(statement, duration)
+            self.current.add(statement, duration, "sqlalchemy")

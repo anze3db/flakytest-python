@@ -519,8 +519,8 @@ function whyText(t) {
   const parts = [];
   if (cats.length) parts.push(`${catLabel(cats[0][0])} ${pct(cats[0][1], t.duration)}`);
   else parts.push("no samples");
-  if (t.segments.length) parts.push(`${t.segments[0].label} (${t.segments[0].phase})`);
-  if ((t.shared_fixture_time || 0) >= 0.05) parts.push(`incl. ${fmt(t.shared_fixture_time)} shared fixture setup`);
+  if (t.segments.length) parts.push(`${t.segments[0].label} in ${t.segments[0].phase}`);
+  if ((t.shared_fixture_time || 0) >= 0.05) parts.push(`incl. ${fmt(t.shared_fixture_time)} in shared fixtures`);
   if (t.db && t.db.queries) parts.push(`${t.db.queries} queries`);
   return parts.join(" · ");
 }
@@ -629,9 +629,10 @@ function fixturesHtml(all, title) {
 
 function dbHtml(agg) {
   if (!agg.queries) return "";
-  const dups = agg.dups.slice(0, 8).map(d => `<tr><td class="num">${d.count}×</td><td class="code">${esc(d.sql)}</td><td><a href="#" data-goto="${esc(d.test.nodeid)}">${esc(d.test.name)}</a></td></tr>`).join("");
+  const kind = sql => /^\s*select/i.test(sql) ? `<span class="pill" title="The same SELECT many times: often a loop that queries per row">N+1?</span>` : `<span class="pill" title="The same write many times: often a loop that could be one bulk query">bulk?</span>`;
+  const dups = agg.dups.slice(0, 8).map(d => `<tr><td class="num">${d.count}×</td><td>${kind(d.sql)}</td><td class="code">${esc(d.sql)}</td><td><a href="#" data-goto="${esc(d.test.nodeid)}">${esc(d.test.name)}</a></td></tr>`).join("");
   return `<h2>Database</h2><div class="card"><p style="margin:0 0 8px">${plural(agg.queries, "query")}, ${fmt(agg.qtime)} in the database driver.</p>
-    ${dups ? `<p class="why" style="margin:0 0 6px">Repeated queries (likely N+1):</p><table><tbody>${dups}</tbody></table>` : `<p class="why" style="margin:0">No query repeated 3 or more times.</p>`}</div>`;
+    ${dups ? `<p class="why" style="margin:0 0 6px">Queries repeated 3 or more times in one test:</p><table><tbody>${dups}</tbody></table>` : `<p class="why" style="margin:0">No query repeated 3 or more times.</p>`}</div>`;
 }
 
 function renderOverview() {
@@ -701,7 +702,7 @@ function renderTest(t) {
   const samples = agg.samples;
   const related = P.insights.filter(i => (i.tests || []).includes(t.nodeid));
   const warn = t.warnings.length ? `<div class="warn">${samples === 0 ? "This test got no samples" : `Only ${samples} samples`} at ${P.run.profiler.rate} Hz, so the breakdown below is ${samples === 0 ? "missing" : "rough"}. Rerun it with <code>--flakytest-rate ${Math.min(20000, P.run.profiler.rate * 5)}</code> for detail.</div>` : "";
-  const shared = (t.shared_fixture_time || 0) >= 0.01 ? `<div class="warn" style="border-color:var(--line-strong);background:var(--surface-2)">Includes ${fmt(t.shared_fixture_time)} of class/module/session fixture setup that this test triggered first; the tests after it reuse it.</div>` : "";
+  const shared = (t.shared_fixture_time || 0) >= 0.01 ? `<div class="warn" style="border-color:var(--line-strong);background:var(--surface-2)">Includes ${fmt(t.shared_fixture_time)} setting up or tearing down class/module/session fixtures that other tests share.</div>` : "";
   return `
     <h1><span class="dot o-${t.outcome}"></span>${esc(t.class ? t.class + "::" + t.name : t.name)}</h1>
     <p class="sub mono">${esc(t.nodeid)}</p>

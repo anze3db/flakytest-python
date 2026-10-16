@@ -53,7 +53,7 @@ def test_n_plus_one_from_repeated_selects(tmp_path):
     doc = build(tmp_path, [record("tests/test_a.py::test_a", call=1.0, db=db)], backend="none")
     insight = next(i for i in doc["insights"] if i["id"] == "n-plus-one")
     assert "select_related" in insight["fix"] or "selectinload" in insight["fix"]
-    assert insight["evidence"] == ["30x SELECT * FROM item WHERE order_id = %s"]
+    assert insight["evidence"] == ["30x in test_a: SELECT * FROM item WHERE order_id = %s"]
 
 
 def test_expensive_function_scoped_fixture(tmp_path):

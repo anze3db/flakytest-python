@@ -15,4 +15,6 @@ def test_query_stats_reports_repeated_queries():
     stats.add("SAVEPOINT s1", 0.001)
     result = stats.as_dict()
     assert result["queries"] == 8
-    assert result["duplicates"] == [{"sql": "SELECT * FROM orders_item WHERE order_id = ?", "count": 5}]
+    assert result["duplicates"] == [
+        {"sql": "SELECT * FROM orders_item WHERE order_id = ?", "count": 5, "source": "django"}
+    ]

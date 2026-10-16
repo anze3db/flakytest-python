@@ -83,7 +83,7 @@ def is_xdist_controller(config: pytest.Config) -> bool:
 class ProfilerPlugin:
     """One per pytest process. Under pytest-xdist the controller only collects the workers' results."""
 
-    active: "ProfilerPlugin | None" = None
+    active: ProfilerPlugin | None = None
 
     def __init__(self, config: pytest.Config) -> None:
         self.config = config
@@ -330,7 +330,16 @@ class ProfilerPlugin:
             return
         write = terminalreporter.write_line
         terminalreporter.write_sep("=", "flakytest profile", cyan=True)
-        for line in text.terminal_summary(self.profile, self.report_path, self.upload_url):
+        previous = None
+        earlier = sorted(
+            run
+            for run in self.run_dir.parent.iterdir()
+            if run.name < self.run_dir.name and (run / "profile.json").exists()
+        )
+        if earlier:
+            with contextlib.suppress(OSError, ValueError):
+                previous = runs.load_profile(earlier[-1])
+        for line in text.terminal_summary(self.profile, self.report_path, self.upload_url, previous):
             write(line)
 
 

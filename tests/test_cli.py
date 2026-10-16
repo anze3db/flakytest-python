@@ -5,7 +5,7 @@ import pytest
 
 from flakytest import cli, mcp
 from flakytest.profiling.analysis import build_profile
-from flakytest.report import html, runs
+from flakytest.report import html, runs, text
 from tests.helpers import process, record, run_info
 
 
@@ -111,3 +111,11 @@ def test_html_report_embeds_profile_safely(project):
     )
     data = json.loads(page[start : page.index("</script>", start)])
     assert data["tests"][0]["longrepr"] == "</script><script>alert(1)</script>"
+
+
+def test_terminal_summary_compares_with_previous_run(project):
+    old = runs.load_profile(runs.resolve_run(project, "previous"))
+    new = runs.load_profile(runs.resolve_run(project, "latest"))
+    line = text.versus(old, new)
+    assert line.startswith("vs previous run (20261001-000000-aaaaaa): 2.00s → 500ms (-1.50s, -75%)")
+    assert "1 new" in line

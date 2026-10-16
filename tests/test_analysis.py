@@ -88,3 +88,17 @@ def test_profile_without_profiler(tmp_path):
     doc = build_profile(run_info(backend="none"), [process([record(FAST, call=0.5)])], tmp_path, {})
     assert doc["tests"][0]["categories"] == {"unsampled": 0.5}
     assert [w["code"] for w in doc["warnings"]] == ["profiler_unavailable"]
+
+
+def test_shared_fixture_teardown_is_labelled(tmp_path):
+    nodeid = "tests/test_api.py::test_last"
+    site = "/venv/lib/python3.15/site-packages"
+    teardown = (f"{site}/_pytest/fixtures.py", "_teardown_yield_fixture", 1)
+    server = (str(tmp_path / "tests/conftest.py"), "live_server", 30)
+    samples = write_tachyon_samples(tmp_path / "s.json", [(phase_stack(nodeid, "teardown", teardown, server), 100)])
+    fixtures = [{"name": "live_server", "scope": "session", "duration": 0.2}]
+    test = record(nodeid, setup=0.2, call=0.01, teardown=0.5, fixtures=fixtures)
+    doc = build_profile(run_info(), [process([test], samples, sampled_seconds=0.7)], tmp_path, {})
+    result = doc["tests"][0]
+    assert result["segments"][0]["label"] == "fixture live_server (session scope)"
+    assert result["shared_fixture_time"] == pytest.approx(0.7)

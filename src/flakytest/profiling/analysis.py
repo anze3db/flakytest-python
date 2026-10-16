@@ -133,14 +133,19 @@ def _importing_module(builder: ProfileBuilder, frames: tuple[RawFrame, ...]) -> 
     return package
 
 
-def _segment_label(frames: list[Frame], position: int, test_func: str, phase: str) -> str:
+def _segment_label(frames: list[Frame], position: int, test_func: str, scopes: dict[str, str]) -> tuple[str, bool]:
+    """A segment's label, and whether it's a class/module/session fixture that other tests share."""
     frame = frames[position]
     parent = frames[position - 1] if position else None
-    if short_name(frame.func) == test_func:
-        return "test body"
+    name = short_name(frame.func)
+    if name == test_func:
+        return "test body", False
     if parent is not None and short_name(parent.func) in ("call_fixture_func", "_teardown_yield_fixture"):
-        return f"fixture {short_name(frame.func)}" + (" (teardown)" if phase == "teardown" else "")
-    return short_name(frame.func)
+        scope = scopes.get(name, "function")
+        if scope != "function":
+            return f"fixture {name} ({scope} scope)", True
+        return f"fixture {name}", False
+    return name, False
 
 
 def _seconds(value: float) -> str:
@@ -201,7 +206,8 @@ def build_profile(run: dict[str, Any], processes: list[dict[str, Any]], rootdir:
     if total_samples and sampled_seconds:
         seconds_per_sample = sampled_seconds / total_samples
 
-    output_tests = [_build_test(builder, test) for test in tests]
+    scopes = {f["name"]: f["scope"] for test in tests for f in test.get("fixtures", [])}
+    output_tests = [_build_test(builder, test, scopes) for test in tests]
 
     summary = _summary(output_tests, timeline, seconds_per_sample)
     summary["imports"] = {
@@ -231,7 +237,7 @@ def build_profile(run: dict[str, Any], processes: list[dict[str, Any]], rootdir:
     return doc
 
 
-def _build_test(builder: ProfileBuilder, test: dict[str, Any]) -> dict[str, Any]:
+def _build_test(builder: ProfileBuilder, test: dict[str, Any], scopes: dict[str, str]) -> dict[str, Any]:
     samples_by_phase: dict[str, Counter] = test.pop("_samples")
     phases = test["phases"]
     test_func = test["name"].split("[", 1)[0]
@@ -241,6 +247,7 @@ def _build_test(builder: ProfileBuilder, test: dict[str, Any]) -> dict[str, Any]
     segments: defaultdict[tuple[str, str, str], float] = defaultdict(float)
     segment_frames: dict[tuple[str, str, str], int | None] = {}
     hot_lines: dict[int, dict[str, Any]] = {}
+    shared_teardown = 0.0
 
     for phase in PHASES:
         counter = samples_by_phase[phase]
@@ -275,7 +282,10 @@ def _build_test(builder: ProfileBuilder, test: dict[str, Any]) -> dict[str, Any]
                 segment_frames.setdefault(segment, None)
             else:
                 frame = frames[position]
-                segment = (phase, _segment_label(frames, position, test_func, phase), f"{frame.path}:{frame.func}")
+                label, shared = _segment_label(frames, position, test_func, scopes)
+                if shared and phase == "teardown":
+                    shared_teardown += seconds
+                segment = (phase, label, f"{frame.path}:{frame.func}")
                 segment_frames.setdefault(segment, ids[position])
             segments[segment] += seconds
 
@@ -319,8 +329,10 @@ def _build_test(builder: ProfileBuilder, test: dict[str, Any]) -> dict[str, Any]
         "samples": sample_counts,
         "stacks": stacks,
         "fixtures": test.get("fixtures", []),
-        # setup time of class/module/session fixtures this test happened to trigger first
-        "shared_fixture_time": r(sum(f["duration"] for f in test.get("fixtures", []) if f["scope"] != "function")),
+        # class/module/session fixture setup (and teardown) this test happened to trigger
+        "shared_fixture_time": r(
+            sum(f["duration"] for f in test.get("fixtures", []) if f["scope"] != "function") + shared_teardown
+        ),
         "categories": {k: r(v) for k, v in sorted(categories.items(), key=_category_sort) if v > 0},
         "segments": [
             {"phase": segment[0], "label": segment[1], "frame": segment_frames[segment], "seconds": r(seconds)}

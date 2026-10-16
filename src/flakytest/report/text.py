@@ -57,9 +57,9 @@ def why(test: dict[str, Any]) -> str:
     parts = [f"{label(category)} {pct(seconds, test['duration'])}"]
     if test["segments"]:
         segment = test["segments"][0]
-        parts.append(f"{segment['label']} ({segment['phase']}) {fmt(segment['seconds'])}")
+        parts.append(f"{segment['label']} in {segment['phase']} {fmt(segment['seconds'])}")
     if test.get("shared_fixture_time", 0) >= 0.05:
-        parts.append(f"incl. {fmt(test['shared_fixture_time'])} shared fixture setup")
+        parts.append(f"incl. {fmt(test['shared_fixture_time'])} in shared fixtures")
     db = test.get("db") or {}
     if db.get("queries"):
         parts.append(f"{db['queries']} queries")
@@ -80,10 +80,31 @@ def headline(profile: dict[str, Any]) -> str:
     )
 
 
-def terminal_summary(profile: dict[str, Any], report_path: Path, upload_url: str | None = None) -> list[str]:
+def versus(old: dict[str, Any], new: dict[str, Any]) -> str:
+    """One line comparing a run with the previous one: speed of the tests both ran, and lost tests."""
+    old_tests = {t["nodeid"]: t for t in old["tests"]}
+    common = [t for t in new["tests"] if t["nodeid"] in old_tests]
+    if not common:
+        return ""
+    before = sum(old_tests[t["nodeid"]]["duration"] for t in common)
+    after = sum(t["duration"] for t in common)
+    parts = [f"vs previous run ({old['run']['id']}): {fmt(before)} → {fmt(after)} ({_delta(after - before, before)})"]
+    changed = sum(1 for t in common if t["outcome"] != old_tests[t["nodeid"]]["outcome"])
+    if changed:
+        parts.append(f"{changed} changed outcome")
+    if len(common) < len(new["tests"]):
+        parts.append(f"{len(new['tests']) - len(common)} new")
+    return ", ".join(parts) + " · flakytest compare"
+
+
+def terminal_summary(
+    profile: dict[str, Any], report_path: Path, upload_url: str | None = None, previous: dict[str, Any] | None = None
+) -> list[str]:
     summary = profile["summary"]
     total = summary["test_time"]
     lines = [headline(profile)]
+    if previous is not None and (line := versus(previous, profile)):
+        lines.append(line)
     categories = [(k, v) for k, v in summary["categories"].items() if v / (total or 1) >= 0.02][:6]
     if categories:
         lines.append("Time goes to: " + " · ".join(f"{label(k)} {pct(v, total)}" for k, v in categories))
@@ -174,7 +195,7 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
     for file, seconds in files.most_common(min(top, 10)):
         out.append(f"| `{file}` | {fmt(seconds)} | {counts[file]} |")
 
-    fixtures = profile.get("fixtures", [])[:10]
+    fixtures = [f for f in profile.get("fixtures", []) if f["total"] >= 0.001][:10]
     if fixtures:
         out += ["", "## Slowest fixtures (exact setup time)", "", "| Fixture | Scope | Calls | Total | Mean |"]
         out.append("|---|---|---:|---:|---:|")
@@ -261,8 +282,8 @@ def test_report(profile: dict[str, Any], query: str, *, min_share: float = 0.02)
         )
         if test.get("shared_fixture_time", 0) >= 0.01:
             out.append(
-                f"Includes {fmt(test['shared_fixture_time'])} of class/module/session fixture setup that this test "
-                "triggered first (other tests reuse it)."
+                f"Includes {fmt(test['shared_fixture_time'])} setting up or tearing down class/module/session "
+                "fixtures that other tests share."
             )
         if "undersampled" in test["warnings"] or "low_samples" in test["warnings"]:
             rate = profile["run"]["profiler"]["rate"]

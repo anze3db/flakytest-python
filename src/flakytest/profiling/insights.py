@@ -120,6 +120,10 @@ def top(values: dict[Any, float], n: int) -> list[tuple[Any, float]]:
     return sorted(values.items(), key=lambda item: -item[1])[:n]
 
 
+def plural(count: int, word: str) -> str:
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
 def pct(seconds: float, total: float) -> str:
     return f"{seconds / total:.0%}" if total else "n/a"
 
@@ -141,10 +145,11 @@ def severity(impact: float, total: float) -> str:
     return "low"
 
 
-def insight(  # noqa: PLR0917  # every rule passes the same positional fields
+def insight(
     profile: Profile,
     id: str,  # noqa: A002
     title: str,
+    *,
     category: str,
     impact: float,
     summary: str,
@@ -219,14 +224,14 @@ def password_hashing(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "password-hashing",
         "Use a fast password hasher in tests",
-        "password_hashing",
-        matched.seconds * 0.95,
-        f"{fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)} of test time) is spent hashing "
+        category="password_hashing",
+        impact=matched.seconds * 0.95,
+        summary=f"{fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)} of test time) is spent hashing "
         "passwords. Slow hashing protects real passwords; in tests it only burns CPU.",
-        fix,
-        "Only change the hasher in test settings. Tests that assert on a specific hash format need updating.",
-        f"{DJANGO_TESTING_DOCS}#password-hashing" if settings else "",
-        matched,
+        fix=fix,
+        safety="Only change the hasher in test settings. Tests that assert on a specific hash format need updating.",
+        docs=f"{DJANGO_TESTING_DOCS}#password-hashing" if settings else "",
+        matched=matched,
     )
 
 
@@ -253,15 +258,15 @@ def migrations(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "reuse-test-database",
         "Stop re-running migrations on every test run",
-        "migrations",
-        matched.seconds * 0.9,
-        f"Migrations take {fmt(matched.seconds)} per run, before the first test can start.",
-        fix,
-        "CI should still build the database from scratch (no --reuse-db) so broken migrations are caught.",
-        "https://pytest-django.readthedocs.io/en/latest/database.html#reuse-db-don-t-remove-the-test-database"
+        category="migrations",
+        impact=matched.seconds * 0.9,
+        summary=f"Migrations take {fmt(matched.seconds)} per run, before the first test can start.",
+        fix=fix,
+        safety="CI should still build the database from scratch (no --reuse-db) so broken migrations are caught.",
+        docs="https://pytest-django.readthedocs.io/en/latest/database.html#reuse-db-don-t-remove-the-test-database"
         if pytest.get("pytest_django")
         else DJANGO_SPEED_DOCS,
-        matched,
+        matched=matched,
     )
 
 
@@ -273,17 +278,17 @@ def transactional_flush(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "django-transaction-testcase",
             "Use TestCase instead of TransactionTestCase",
-            "db_schema",
-            flush.seconds * 0.9,
-            f"{fmt(flush.seconds)} goes to flushing every table after tests in {len(flush.by_test)} "
+            category="db_schema",
+            impact=flush.seconds * 0.9,
+            summary=f"{fmt(flush.seconds)} goes to flushing every table after tests in {len(flush.by_test)} "
             "TransactionTestCase / transaction=True / live_server tests.",
-            "Use django.test.TestCase (or @pytest.mark.django_db without transaction=True): it wraps each test "
+            fix="Use django.test.TestCase (or @pytest.mark.django_db without transaction=True): it wraps each test "
             "in a transaction and rolls back instead of truncating every table. Keep TransactionTestCase only "
             "for tests that need real commits (on_commit hooks can use TestCase.captureOnCommitCallbacks).",
-            "Tests that rely on commit behaviour, multiple connections or a live server still need a "
+            safety="Tests that rely on commit behaviour, multiple connections or a live server still need a "
             "transactional test case.",
-            "https://docs.djangoproject.com/en/stable/topics/testing/tools/#transactiontestcase",
-            flush,
+            docs="https://docs.djangoproject.com/en/stable/topics/testing/tools/#transactiontestcase",
+            matched=flush,
         )
     schema = profile.through("sqlalchemy/sql/schema.py", ("create_all", "drop_all"))
     if worth_it(schema.seconds, profile, 0.5, 0.01) and len(schema.by_test) > 1:
@@ -291,16 +296,17 @@ def transactional_flush(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "sqlalchemy-schema-per-test",
             "Create the SQLAlchemy schema once, roll back per test",
-            "db_schema",
-            schema.seconds * 0.9,
-            f"metadata.create_all / drop_all runs in {len(schema.by_test)} tests and costs {fmt(schema.seconds)}.",
-            "Create the schema in a session-scoped fixture, then give every test a connection with an outer "
+            category="db_schema",
+            impact=schema.seconds * 0.9,
+            summary=f"metadata.create_all / drop_all runs in {len(schema.by_test)} tests and costs "
+            f"{fmt(schema.seconds)}.",
+            fix="Create the schema in a session-scoped fixture, then give every test a connection with an outer "
             "transaction and bind the Session with join_transaction_mode='create_savepoint'; roll back at the "
             "end of each test.",
-            "Code that commits still works: the commit releases a savepoint, and the outer rollback undoes it.",
-            "https://docs.sqlalchemy.org/en/20/orm/session_transaction.html"
+            safety="Code that commits still works: the commit releases a savepoint, and the outer rollback undoes it.",
+            docs="https://docs.sqlalchemy.org/en/20/orm/session_transaction.html"
             "#joining-a-session-into-an-external-transaction-such-as-for-test-suites",
-            schema,
+            matched=schema,
         )
 
 
@@ -313,15 +319,15 @@ def fixture_loading(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "django-fixture-loading",
         "Load test data once per class, not once per test",
-        "fixture_loading",
-        matched.seconds * 0.7,
-        f"Loading Django fixtures (loaddata / deserialization) costs {fmt(matched.seconds)}.",
-        "With TestCase, class-level `fixtures = [...]` load once per class; with TransactionTestCase or "
+        category="fixture_loading",
+        impact=matched.seconds * 0.7,
+        summary=f"Loading Django fixtures (loaddata / deserialization) costs {fmt(matched.seconds)}.",
+        fix="With TestCase, class-level `fixtures = [...]` load once per class; with TransactionTestCase or "
         "pytest-django's django_db_blocker they load per test. Prefer setUpTestData with factories, or load "
         "shared reference data once in a session fixture (django_db_setup) with --reuse-db.",
-        "Data loaded once per class is rolled back per test only inside TestCase's transaction.",
-        "https://docs.djangoproject.com/en/stable/topics/testing/tools/#fixture-loading",
-        matched,
+        safety="Data loaded once per class is rolled back per test only inside TestCase's transaction.",
+        docs="https://docs.djangoproject.com/en/stable/topics/testing/tools/#fixture-loading",
+        matched=matched,
     )
 
 
@@ -357,16 +363,16 @@ def setup_per_test(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "django-setuptestdata",
         "Create shared test data in setUpTestData instead of setUp",
-        "db",
-        matched.seconds * 0.7,
-        f"setUp() runs before every test and takes {fmt(matched.seconds)} in total ({mostly}) in "
-        f"{len(multi)} classes: {', '.join(multi[:4])}.",
-        "Move object creation that tests only read from setUp() into `@classmethod def setUpTestData(cls)`: it "
+        category="db",
+        impact=matched.seconds * 0.7,
+        summary=f"setUp() runs before every test and takes {fmt(matched.seconds)} in total ({mostly}) in "
+        f"{len(multi)} {'class' if len(multi) == 1 else 'classes'}: {', '.join(multi[:4])}.",
+        fix="Move object creation that tests only read from setUp() into `@classmethod def setUpTestData(cls)`: it "
         "runs once per class and each test still sees the original rows (TestCase rolls back to a savepoint).",
-        "Since Django 3.2 attributes assigned in setUpTestData are deep-copied per test, so in-memory changes "
+        safety="Since Django 3.2 attributes assigned in setUpTestData are deep-copied per test, so in-memory changes "
         "don't leak between tests. Keep objects a test modifies in the database (or re-fetches) as before.",
-        "https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TestCase.setUpTestData",
-        matched,
+        docs="https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TestCase.setUpTestData",
+        matched=matched,
     )
 
 
@@ -381,16 +387,16 @@ def expensive_function_fixtures(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             f"fixture-scope-{fixture['name']}",
             f"Fixture `{fixture['name']}` is rebuilt for every test",
-            "fixtures",
-            fixture["total"] * 0.8,
-            f"`{fixture['name']}` is function-scoped: it ran {fixture['calls']} times at {fmt(fixture['mean'])} each, "
-            f"{fmt(fixture['total'])} in total.",
-            f"If tests only read what `{fixture['name']}` builds, give it scope='module' or scope='session'. If they "
-            "modify it, split it: an expensive higher-scoped fixture that builds the thing once, plus a cheap "
+            category="fixtures",
+            impact=fixture["total"] * 0.8,
+            summary=f"`{fixture['name']}` is function-scoped: it ran {fixture['calls']} times at "
+            f"{fmt(fixture['mean'])} each, {fmt(fixture['total'])} in total.",
+            fix=f"If tests only read what `{fixture['name']}` builds, give it scope='module' or scope='session'. "
+            "If they modify it, split it: an expensive higher-scoped fixture that builds the thing once, plus a cheap "
             "function-scoped one that resets or copies it (or wraps it in a transaction that is rolled back).",
-            "A wider scope shares state between tests: check no test mutates it, and run the suite in random "
+            safety="A wider scope shares state between tests: check no test mutates it, and run the suite in random "
             "order (pytest-randomly) to catch leaks.",
-            "https://docs.pytest.org/en/stable/how-to/fixtures.html#scope-sharing-fixtures-across-classes-modules"
+            docs="https://docs.pytest.org/en/stable/how-to/fixtures.html#scope-sharing-fixtures-across-classes-modules"
             "-packages-or-session",
             tests=[t["nodeid"] for t in profile.tests if any(f["name"] == fixture["name"] for f in t["fixtures"])][
                 :MAX_TESTS
@@ -408,15 +414,16 @@ def sleeping(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "sleep",
         "Tests are sleeping",
-        "sleep",
-        matched.seconds * 0.9,
-        f"{fmt(matched.seconds)} of test time is spent in sleep() calls, in {len(matched.by_test)} tests.",
-        "Don't wait a fixed time for something to happen: poll for the condition with a short interval and a "
+        category="sleep",
+        impact=matched.seconds * 0.9,
+        summary=f"{fmt(matched.seconds)} of test time is spent in sleep() calls, in "
+        f"{plural(len(matched.by_test), 'test')}.",
+        fix="Don't wait a fixed time for something to happen: poll for the condition with a short interval and a "
         "timeout, patch time.sleep in retry/backoff code (or make the delay configurable and 0 in tests), and "
         "use time-machine or freezegun to move the clock instead of waiting for it.",
-        "Polling keeps the test meaningful; a mocked sleep in retry code should still assert how often it retried.",
-        "",
-        matched,
+        safety="Polling keeps the test meaningful; a mocked sleep in retry code should still assert how often it "
+        "retried.",
+        matched=matched,
     )
 
 
@@ -429,15 +436,13 @@ def waiting(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "waiting",
         "Tests are blocked waiting on threads, queues or the event loop",
-        "waiting",
-        matched.seconds * 0.5,
-        f"{fmt(matched.seconds)} is spent blocked in Event.wait / Thread.join / Queue.get / select().",
-        "Look at the listed lines: lower timeouts in test settings, signal completion instead of waiting for a "
+        category="waiting",
+        impact=matched.seconds * 0.5,
+        summary=f"{fmt(matched.seconds)} is spent blocked in Event.wait / Thread.join / Queue.get / select().",
+        fix="Look at the listed lines: lower timeouts in test settings, signal completion instead of waiting for a "
         "timeout, and run background work synchronously in tests (e.g. CELERY_TASK_ALWAYS_EAGER, a synchronous "
         "executor).",
-        "",
-        "",
-        matched,
+        matched=matched,
     )
 
 
@@ -450,17 +455,16 @@ def network(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "network",
         "Tests make real network calls",
-        "network",
-        matched.seconds * 0.9,
-        f"{fmt(matched.seconds)} is spent on sockets/HTTP in {len(matched.by_test)} tests. Network calls are "
-        "slow, and the top cause of flaky tests that pass locally but fail in CI (or vice versa).",
-        "Mock HTTP at the transport: responses or pytest-httpserver for requests, respx or pytest-httpx for "
+        category="network",
+        impact=matched.seconds * 0.9,
+        summary=f"{fmt(matched.seconds)} is spent on sockets/HTTP in {plural(len(matched.by_test), 'test')}. "
+        "Network calls are slow, and the top cause of flaky tests that pass locally but fail in CI (or vice versa).",
+        fix="Mock HTTP at the transport: responses or pytest-httpserver for requests, respx or pytest-httpx for "
         "httpx, aioresponses for aiohttp, botocore Stubber or moto for AWS; record real responses with "
         "vcrpy/pytest-recording. Then block accidental network access with pytest-socket (--disable-socket "
         "--allow-unix-socket).",
-        "Keep a few explicitly marked integration tests that talk to the real service.",
-        "",
-        matched,
+        safety="Keep a few explicitly marked integration tests that talk to the real service.",
+        matched=matched,
     )
 
 
@@ -481,13 +485,12 @@ def cache_backend(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "cache-backend",
         "Use an in-memory cache in tests",
-        "cache",
-        matched.seconds * 0.8,
-        f"{fmt(matched.seconds)} is spent talking to Redis/Memcached.",
-        fix,
-        "Clear the cache between tests (cache.clear() in an autouse fixture) so tests stay independent.",
-        "",
-        matched,
+        category="cache",
+        impact=matched.seconds * 0.8,
+        summary=f"{fmt(matched.seconds)} is spent talking to Redis/Memcached.",
+        fix=fix,
+        safety="Clear the cache between tests (cache.clear() in an autouse fixture) so tests stay independent.",
+        matched=matched,
     )
 
 
@@ -508,13 +511,12 @@ def subprocesses(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "subprocess",
         "Tests spawn processes",
-        "subprocess",
-        matched.seconds * 0.7,
-        f"{fmt(matched.seconds)} is spent starting and waiting for subprocesses.",
-        fix,
-        "Keep one end-to-end test that runs the real command.",
-        "",
-        matched,
+        category="subprocess",
+        impact=matched.seconds * 0.7,
+        summary=f"{fmt(matched.seconds)} is spent starting and waiting for subprocesses.",
+        fix=fix,
+        safety="Keep one end-to-end test that runs the real command.",
+        matched=matched,
     )
 
 
@@ -527,15 +529,14 @@ def browsers(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "browser",
         "Share the browser between tests",
-        "browser",
-        matched.seconds * 0.4,
-        f"Browser automation takes {fmt(matched.seconds)} in {len(matched.by_test)} tests.",
-        "Launch the browser once per session and give each test a fresh context/page (pytest-playwright does "
+        category="browser",
+        impact=matched.seconds * 0.4,
+        summary=f"Browser automation takes {fmt(matched.seconds)} in {len(matched.by_test)} tests.",
+        fix="Launch the browser once per session and give each test a fresh context/page (pytest-playwright does "
         "this by default; with Selenium use a session-scoped driver and delete cookies per test). Run browser "
         "tests in their own CI job, in parallel, and cover logic with fast unit tests.",
-        "A fresh browser context per test keeps cookies and storage isolated.",
-        "",
-        matched,
+        safety="A fresh browser context per test keeps cookies and storage isolated.",
+        matched=matched,
     )
 
 
@@ -575,14 +576,13 @@ def factories(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "factories",
         "Test data factories are a large share of test time",
-        "factories",
-        total * 0.5,
-        f"Factories and fake data take {fmt(matched.seconds)}, plus {fmt(db_from_factories.seconds)} of "
+        category="factories",
+        impact=total * 0.5,
+        summary=f"Factories and fake data take {fmt(matched.seconds)}, plus {fmt(db_from_factories.seconds)} of "
         "database writes they trigger.",
-        " ".join(fix),
-        "Shared objects must not be modified by tests (or must live inside TestCase's rollback).",
-        "",
-        matched if matched.seconds >= db_from_factories.seconds else db_from_factories,
+        fix=" ".join(fix),
+        safety="Shared objects must not be modified by tests (or must live inside TestCase's rollback).",
+        matched=matched if matched.seconds >= db_from_factories.seconds else db_from_factories,
     )
 
 
@@ -594,14 +594,14 @@ def mocking(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "freezegun",
             "Replace freezegun with time-machine",
-            "mocking",
-            freezegun.seconds * 0.9,
-            f"freezegun takes {fmt(freezegun.seconds)}: it scans every loaded module each time it starts.",
-            "time-machine (pip install time-machine) has the same decorator/context manager API "
+            category="mocking",
+            impact=freezegun.seconds * 0.9,
+            summary=f"freezegun takes {fmt(freezegun.seconds)}: it scans every loaded module each time it starts.",
+            fix="time-machine (pip install time-machine) has the same decorator/context manager API "
             "(time_machine.travel) and mocks time at the C level, so starting it is nearly free.",
-            "time-machine travels by default (the clock keeps running); use tick=False for a frozen clock.",
-            "https://github.com/adamchainz/time-machine#migrating-from-freezegun",
-            freezegun,
+            safety="time-machine travels by default (the clock keeps running); use tick=False for a frozen clock.",
+            docs="https://github.com/adamchainz/time-machine#migrating-from-freezegun",
+            matched=freezegun,
         )
     autospec = profile.through("unittest/mock.py", ("create_autospec", "_check_sig", "_set_signature"))
     matched = profile.in_category("mocking")
@@ -611,15 +611,13 @@ def mocking(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "mocking",
             "Mock setup is expensive",
-            "mocking",
-            (matched.seconds - freezegun.seconds) * 0.5,
-            f"unittest.mock takes {fmt(matched.seconds - freezegun.seconds)}{detail}.",
-            "Patch once per class or module (a class-level decorator, or a module-scoped fixture with "
+            category="mocking",
+            impact=(matched.seconds - freezegun.seconds) * 0.5,
+            summary=f"unittest.mock takes {fmt(matched.seconds - freezegun.seconds)}{detail}.",
+            fix="Patch once per class or module (a class-level decorator, or a module-scoped fixture with "
             "monkeypatch.context) instead of in every test or loop iteration; autospec=True/create_autospec "
             "introspects signatures each time, so reuse the spec'd mock.",
-            "",
-            "",
-            matched,
+            matched=matched,
         )
 
 
@@ -632,30 +630,28 @@ def deepcopy(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "django-testdata-deepcopy",
             "setUpTestData attributes are deep-copied on every access",
-            "copying",
-            test_data.seconds * 0.8,
-            f"Django deep-copies class attributes set in setUpTestData the first time each test reads them: "
+            category="copying",
+            impact=test_data.seconds * 0.8,
+            summary=f"Django deep-copies class attributes set in setUpTestData the first time each test reads them: "
             f"{fmt(test_data.seconds)} in total.",
-            "Store only what tests need (model instances, not big dicts/lists or querysets of everything), keep "
+            fix="Store only what tests need (model instances, not big dicts/lists or querysets of everything), keep "
             "large read-only data in module constants, or store ids and fetch in the test.",
-            "The copy is what isolates tests from each other's in-memory changes: only move data that tests "
+            safety="The copy is what isolates tests from each other's in-memory changes: only move data that tests "
             "don't modify.",
-            "https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TestCase.setUpTestData",
-            test_data,
+            docs="https://docs.djangoproject.com/en/stable/topics/testing/tools/#django.test.TestCase.setUpTestData",
+            matched=test_data,
         )
     elif worth_it(matched.seconds, profile, 1.0, 0.03):
         yield insight(
             profile,
             "deepcopy",
             "copy.deepcopy is expensive",
-            "copying",
-            matched.seconds * 0.5,
-            f"copy.deepcopy takes {fmt(matched.seconds)}.",
-            "Deep-copy less: build fresh small objects per test, or share immutable data (tuples, frozen "
+            category="copying",
+            impact=matched.seconds * 0.5,
+            summary=f"copy.deepcopy takes {fmt(matched.seconds)}.",
+            fix="Deep-copy less: build fresh small objects per test, or share immutable data (tuples, frozen "
             "dataclasses, MappingProxyType) instead of copying it.",
-            "",
-            "",
-            matched,
+            matched=matched,
         )
 
 
@@ -667,16 +663,14 @@ def imports_in_tests(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "imports-in-tests",
             "Modules are imported while tests run",
-            "imports",
-            matched.seconds * 0.3,
-            f"{fmt(matched.seconds)} of test time is spent importing modules: whichever test imports a heavy "
+            category="imports",
+            impact=matched.seconds * 0.3,
+            summary=f"{fmt(matched.seconds)} of test time is spent importing modules: whichever test imports a heavy "
             "module first pays for it, which makes that test look slow (and varies with test order).",
-            "Find what is imported at the lines listed. Import heavy modules at the top of the test module or in "
+            fix="Find what is imported at the lines listed. Import heavy modules at the top of the test module or in "
             "conftest.py so the cost shows up once at collection, or avoid importing them in tests at all "
             "(e.g. stub the heavy dependency).",
-            "",
-            "",
-            matched,
+            matched=matched,
         )
     timeline = profile.doc["summary"].get("timeline", {})
     startup = timeline.get("startup", 0) + timeline.get("collection", 0)
@@ -689,15 +683,14 @@ def imports_in_tests(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "slow-startup",
             "pytest takes a long time before the first test runs",
-            "imports",
-            startup * 0.4,
-            f"Startup takes {fmt(timeline.get('startup', 0))} and collection {fmt(timeline.get('collection', 0))} "
-            "on every run, even when you only run one test.",
-            "Set testpaths and norecursedirs (node_modules, .venv, build, docs) so pytest doesn't walk unrelated "
+            category="imports",
+            impact=startup * 0.4,
+            summary=f"Startup takes {fmt(timeline.get('startup', 0))} and collection "
+            f"{fmt(timeline.get('collection', 0))} on every run, even when you only run one test.",
+            fix="Set testpaths and norecursedirs (node_modules, .venv, build, docs) so pytest doesn't walk unrelated "
             "directories; move heavy imports out of module level in test files and conftest.py into fixtures; "
             "check `python -X importtime -m pytest --collect-only -q` for the slowest imports.",
-            "",
-            "https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths",
+            docs="https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths",
             evidence=modules,
         )
 
@@ -711,15 +704,15 @@ def garbage_collection(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "gc",
         "The garbage collector is a noticeable share of test time",
-        "gc",
-        matched.seconds * 0.6,
-        f"Garbage collection pauses take {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}).",
-        "In conftest.py, call gc.freeze() at the end of pytest_sessionstart (after imports and setup) so "
+        category="gc",
+        impact=matched.seconds * 0.6,
+        summary=f"Garbage collection pauses take {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}).",
+        fix="In conftest.py, call gc.freeze() at the end of pytest_sessionstart (after imports and setup) so "
         "long-lived objects are never scanned again, and raise the first-generation threshold, e.g. "
         "gc.set_threshold(50_000, 50, 100).",
-        "This trades memory for speed; watch memory use on large suites.",
-        "https://docs.python.org/3/library/gc.html#gc.freeze",
-        matched,
+        safety="This trades memory for speed; watch memory use on large suites.",
+        docs="https://docs.python.org/3/library/gc.html#gc.freeze",
+        matched=matched,
     )
 
 
@@ -732,14 +725,13 @@ def logging_overhead(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "logging",
         "Logging is expensive in tests",
-        "logging",
-        matched.seconds * 0.6,
-        f"Formatting and emitting log records takes {fmt(matched.seconds)}.",
-        "Raise the log level in test settings (e.g. WARNING), remove DEBUG-level handlers that format every "
+        category="logging",
+        impact=matched.seconds * 0.6,
+        summary=f"Formatting and emitting log records takes {fmt(matched.seconds)}.",
+        fix="Raise the log level in test settings (e.g. WARNING), remove DEBUG-level handlers that format every "
         "record, and keep caplog to the tests that assert on logs.",
-        "Tests that assert on log output need the logger enabled at that level (caplog.set_level).",
-        "",
-        matched,
+        safety="Tests that assert on log output need the logger enabled at that level (caplog.set_level).",
+        matched=matched,
     )
 
 
@@ -756,13 +748,12 @@ def serialization(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "serialization",
         "Serialization is a large share of test time",
-        "serialization",
-        matched.seconds * 0.4,
-        f"JSON/YAML/pydantic (de)serialization takes {fmt(matched.seconds)}.",
-        fix,
-        "Return copies of cached data if tests modify it.",
-        "",
-        matched,
+        category="serialization",
+        impact=matched.seconds * 0.4,
+        summary=f"JSON/YAML/pydantic (de)serialization takes {fmt(matched.seconds)}.",
+        fix=fix,
+        safety="Return copies of cached data if tests modify it.",
+        matched=matched,
     )
 
 
@@ -778,29 +769,80 @@ def n_plus_one(profile: Profile) -> Iterator[dict[str, Any]]:
         return
     offenders.sort(key=lambda o: -o[1]["count"])
     impact = sum(db["time"] * (1 - 1 / max(dup["count"], 1)) for _, dup, db in offenders)
-    orm = "Django" if django(profile) else "SQLAlchemy"
-    fix = (
-        "Fetch related rows in one query: select_related() for foreign keys and prefetch_related() for "
-        "reverse/many-to-many relations, then lock the count in with assertNumQueries (or pytest-django's "
-        "django_assert_num_queries)."
-        if orm == "Django"
-        else "Load relationships eagerly: selectinload()/joinedload() in the query, or lazy='selectin' on the "
-        "relationship, and assert the statement count in a test."
-    )
+    sources = {dup.get("source", "django") for _, dup, _ in offenders}
+    fixes = []
+    if "django" in sources:
+        fixes.append(
+            "Django: fetch related rows in one query with select_related() for foreign keys and prefetch_related() "
+            "for reverse/many-to-many relations, then lock the count in with assertNumQueries (or pytest-django's "
+            "django_assert_num_queries)."
+        )
+    if "sqlalchemy" in sources:
+        fixes.append(
+            "SQLAlchemy: load relationships eagerly with selectinload()/joinedload() (or lazy='selectin'), or "
+            "replace per-row queries with one grouped query (GROUP BY / a join), and assert the statement count "
+            "in a test."
+        )
     yield insight(
         profile,
         "n-plus-one",
         "Repeated queries (N+1) in the code under test",
-        "db",
-        impact,
-        f"{len(offenders)} tests run the same query 10+ times, e.g. {offenders[0][1]['count']}x in "
+        category="db",
+        impact=impact,
+        summary=f"{len(offenders)} tests run the same query 10+ times, e.g. {offenders[0][1]['count']}x in "
         f"{offenders[0][0]['name']}. N+1 queries slow the tests and production alike.",
-        fix,
-        "This changes application code, so it speeds up production too; the tests stay as they are.",
-        "https://docs.djangoproject.com/en/stable/topics/db/optimization/" if orm == "Django" else "",
+        fix=" ".join(fixes),
+        safety="This changes application code, so it speeds up production too; the tests stay as they are.",
+        docs="https://docs.djangoproject.com/en/stable/topics/db/optimization/" if sources == {"django"} else "",
         tests=[test["nodeid"] for test, _, _ in offenders][:MAX_TESTS],
-        evidence=[f"{dup['count']}x {dup['sql']}" for _, dup, _ in offenders[:5]],
+        evidence=[f"{dup['count']}x in {test['name']}: {dup['sql']}" for test, dup, _ in offenders[:5]],
     )
+
+
+@rule
+def database_server(profile: Profile) -> Iterator[dict[str, Any]]:
+    matched = profile.in_category("db", "db_schema", "migrations")
+    engines = " ".join(django(profile).get("databases", []))
+    connects = profile.matching(
+        lambda s: (
+            s.category == "db"
+            and any(
+                profile.frame_matches(f, "psycopg", ("connect",))
+                or profile.frame_matches(f, "sqlalchemy/pool/", ("__connect", "_create_connection", "connect"))
+                or profile.frame_matches(f, "django/db/backends/base/base.py", ("connect",))
+                for f in s.frames
+            )
+        )
+    )
+    if worth_it(connects.seconds, profile, 0.5, 0.02):
+        yield insight(
+            profile,
+            "db-connections",
+            "Tests open new database connections over and over",
+            category="db",
+            impact=connects.seconds * 0.8,
+            summary=f"Connecting to the database takes {fmt(connects.seconds)}.",
+            fix="Reuse connections: create the engine once per session (not per test) and keep the default pool "
+            "(NullPool reconnects on every checkout); in Django avoid closing connections in tests "
+            "(connection.close()/close_old_connections).",
+            matched=connects,
+        )
+    if ("postgresql" in engines or "mysql" in engines) and worth_it(matched.seconds, profile, 5.0, 0.2):
+        yield insight(
+            profile,
+            "db-server-durability",
+            "Make the test database server skip durability work",
+            category="db",
+            impact=matched.seconds * 0.2,
+            summary=f"Tests spend {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}) in the database. "
+            "Test databases don't need to survive a crash, so the server can skip flushing to disk.",
+            fix="For a PostgreSQL test server (Docker/CI service) start it with -c fsync=off -c synchronous_commit=off "
+            "-c full_page_writes=off, and put its data directory on tmpfs; for MySQL use "
+            "--innodb-flush-log-at-trx-commit=0 --skip-log-bin. Never on a server with data you need.",
+            safety="Only affects crash safety of the throwaway test server; query behaviour is identical.",
+            docs="https://www.postgresql.org/docs/current/non-durability.html",
+            matched=matched,
+        )
 
 
 @rule
@@ -822,13 +864,12 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
                     profile,
                     "xdist-balance",
                     "pytest-xdist workers finish at very different times",
-                    "parallelism",
-                    (busiest - least) / 2,
-                    f"The busiest worker ran {fmt(busiest)} of tests, the least busy {fmt(least)}.",
-                    "Use --dist worksteal (pytest-xdist 3.2+) so idle workers take tests from busy ones; if you "
+                    category="parallelism",
+                    impact=(busiest - least) / 2,
+                    summary=f"The busiest worker ran {fmt(busiest)} of tests, the least busy {fmt(least)}.",
+                    fix="Use --dist worksteal (pytest-xdist 3.2+) so idle workers take tests from busy ones; if you "
                     "use --dist loadscope/loadfile, split the biggest classes or modules.",
-                    "",
-                    "https://pytest-xdist.readthedocs.io/en/stable/distribution.html",
+                    docs="https://pytest-xdist.readthedocs.io/en/stable/distribution.html",
                 )
         return
     if cpus < 2 or profile.test_time < 20:
@@ -843,15 +884,15 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "xdist",
         f"Run tests in parallel on all {cpus} CPUs",
-        "parallelism",
-        saved,
-        f"Tests run one at a time: {fmt(profile.test_time)} of test time on a {cpus}-CPU machine. "
+        category="parallelism",
+        impact=saved,
+        summary=f"Tests run one at a time: {fmt(profile.test_time)} of test time on a {cpus}-CPU machine. "
         f"With pytest-xdist this could take about {fmt(estimate)}.",
-        f"{install}run pytest -n auto (add it to addopts, or only in CI). pytest-django creates a separate "
+        fix=f"{install}run pytest -n auto (add it to addopts, or only in CI). pytest-django creates a separate "
         "test database per worker automatically.",
-        "Tests must not share state: files in fixed paths, ports, a shared database without per-worker names, "
+        safety="Tests must not share state: files in fixed paths, ports, a shared database without per-worker names, "
         "or module globals. Run with -p randomly first to shake out order dependencies.",
-        "https://pytest-xdist.readthedocs.io/en/stable/",
+        docs="https://pytest-xdist.readthedocs.io/en/stable/",
     )
 
 
@@ -864,14 +905,14 @@ def coverage(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "coverage-sysmon",
             "Measure coverage with sys.monitoring",
-            "coverage",
-            profile.test_time * 0.1,
-            "pytest-cov is active with the default tracer. On Python 3.12+ coverage.py can use sys.monitoring, "
+            category="coverage",
+            impact=profile.test_time * 0.1,
+            summary="pytest-cov is active with the default tracer. On Python 3.12+ coverage.py can use sys.monitoring, "
             "which has much lower overhead.",
-            "Set COVERAGE_CORE=sysmon in the environment (coverage 7.4+). Branch coverage needs Python 3.14 "
+            fix="Set COVERAGE_CORE=sysmon in the environment (coverage 7.4+). Branch coverage needs Python 3.14 "
             "for sysmon.",
-            "Coverage numbers are the same; only how they're measured changes.",
-            "https://coverage.readthedocs.io/en/latest/cmd.html#execution-measurement",
+            safety="Coverage numbers are the same; only how they're measured changes.",
+            docs="https://coverage.readthedocs.io/en/latest/cmd.html#execution-measurement",
         )
 
 
@@ -886,14 +927,28 @@ def django_settings(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "django-debug-toolbar",
             "Disable django-debug-toolbar in tests",
-            "app_code",
-            toolbar.seconds,
-            f"django-debug-toolbar is installed in the test settings and costs {fmt(toolbar.seconds)}.",
-            "Only add debug_toolbar to INSTALLED_APPS and MIDDLEWARE when not testing "
+            category="app_code",
+            impact=toolbar.seconds,
+            summary=f"django-debug-toolbar is installed in the test settings and costs {fmt(toolbar.seconds)}.",
+            fix="Only add debug_toolbar to INSTALLED_APPS and MIDDLEWARE when not testing "
             "(e.g. `if DEBUG and not TESTING:`).",
-            "",
-            "https://django-debug-toolbar.readthedocs.io/en/latest/installation.html#disable-the-toolbar-when-running-tests-optional",
-            toolbar,
+            docs="https://django-debug-toolbar.readthedocs.io/en/latest/installation.html#disable-the-toolbar-when-running-tests-optional",
+            matched=toolbar,
+        )
+    debug_cursor = profile.matching(
+        lambda s: any(profile.frames[f][1].startswith("CursorDebugWrapper") for f in s.frames)
+    )
+    if settings.get("debug") and debug_cursor.seconds >= 0.3:
+        yield insight(
+            profile,
+            "django-debug-in-tests",
+            "Tests run with DEBUG = True",
+            category="db",
+            impact=debug_cursor.seconds * 0.2,
+            summary="DEBUG is on, so Django records every SQL query (CursorDebugWrapper) and keeps extra debug state.",
+            fix="Don't force DEBUG = True in tests (Django's test runner sets it to False unless you pass "
+            "--debug-mode, pytest-django unless you set django_debug_mode).",
+            safety="Tests that rely on DEBUG behaviour (e.g. error pages) can override it with override_settings.",
         )
     static = profile.through("django/contrib/staticfiles/storage.py")
     whitenoise = profile.through("whitenoise/")
@@ -902,14 +957,12 @@ def django_settings(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "django-static-storage",
             "Use plain static file storage in tests",
-            "app_code",
-            static.seconds + whitenoise.seconds,
-            f"Static file storage/manifest handling costs {fmt(static.seconds + whitenoise.seconds)}.",
-            'In test settings use STORAGES["staticfiles"] = {"BACKEND": '
+            category="app_code",
+            impact=static.seconds + whitenoise.seconds,
+            summary=f"Static file storage/manifest handling costs {fmt(static.seconds + whitenoise.seconds)}.",
+            fix='In test settings use STORAGES["staticfiles"] = {"BACKEND": '
             '"django.contrib.staticfiles.storage.StaticFilesStorage"} so templates don\'t need a manifest.',
-            "",
-            "",
-            static if static.seconds >= whitenoise.seconds else whitenoise,
+            matched=static if static.seconds >= whitenoise.seconds else whitenoise,
         )
     celery = profile.through("celery/")
     if celery.seconds >= 0.5 and not settings.get("celery_eager"):
@@ -917,14 +970,14 @@ def django_settings(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             "celery-eager",
             "Run Celery tasks eagerly in tests",
-            "app_code",
-            celery.seconds * 0.7,
-            f"Celery machinery takes {fmt(celery.seconds)}.",
-            "Set CELERY_TASK_ALWAYS_EAGER = True in test settings (or call task functions directly) so tasks "
+            category="app_code",
+            impact=celery.seconds * 0.7,
+            summary=f"Celery machinery takes {fmt(celery.seconds)}.",
+            fix="Set CELERY_TASK_ALWAYS_EAGER = True in test settings (or call task functions directly) so tasks "
             "run in-process without a broker.",
-            "Eager tasks skip serialization; keep a few tests that run a real worker if you depend on it.",
-            "https://docs.celeryq.dev/en/stable/userguide/testing.html",
-            celery,
+            safety="Eager tasks skip serialization; keep a few tests that run a real worker if you depend on it.",
+            docs="https://docs.celeryq.dev/en/stable/userguide/testing.html",
+            matched=celery,
         )
 
 
@@ -938,14 +991,14 @@ def async_loops(profile: Profile) -> Iterator[dict[str, Any]]:
         profile,
         "asyncio-loop-per-test",
         "A new event loop is created for every async test",
-        "pytest",
-        loops.seconds * 0.8,
-        f"Creating and closing event loops takes {fmt(loops.seconds)}.",
-        "With pytest-asyncio 0.24+ set asyncio_default_fixture_loop_scope / loop_scope='session' (or "
+        category="pytest",
+        impact=loops.seconds * 0.8,
+        summary=f"Creating and closing event loops takes {fmt(loops.seconds)}.",
+        fix="With pytest-asyncio 0.24+ set asyncio_default_fixture_loop_scope / loop_scope='session' (or "
         "@pytest.mark.asyncio(loop_scope='session')) so tests share one loop.",
-        "Tests then share loop state: don't leave tasks running between tests.",
-        "https://pytest-asyncio.readthedocs.io/en/stable/how-to-guides/run_session_tests_in_same_loop.html",
-        loops,
+        safety="Tests then share loop state: don't leave tasks running between tests.",
+        docs="https://pytest-asyncio.readthedocs.io/en/stable/how-to-guides/run_session_tests_in_same_loop.html",
+        matched=loops,
     )
 
 
@@ -963,15 +1016,13 @@ def slowest_tests(profile: Profile) -> Iterator[dict[str, Any]]:
             profile,
             f"slow-test-{test['key']}",
             f"{test['name']} alone takes {pct(test['duration'], profile.test_time)} of test time",
-            top[0],
-            test["duration"] * 0.5,
-            f"{test['nodeid']} takes {fmt(test['duration'])}: mostly {top[0].replace('_', ' ')} "
+            category=top[0],
+            impact=test["duration"] * 0.5,
+            summary=f"{test['nodeid']} takes {fmt(test['duration'])}: mostly {top[0].replace('_', ' ')} "
             f"({fmt(top[1])}), biggest piece: {segment}.",
-            f"Open its breakdown (flakytest report --test '{test['nodeid']}') and fix the biggest piece first. "
+            fix=f"Open its breakdown (flakytest report --test '{test['nodeid']}') and fix the biggest piece first. "
             "If it's an integration test that has to be slow, mark it (@pytest.mark.slow) and run it in a "
             "separate CI job.",
-            "",
-            "",
             tests=[test["nodeid"]],
         )
 
