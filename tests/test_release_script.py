@@ -100,6 +100,21 @@ def test_set_version():
     assert 'version = "2026.0b1"' in release.set_version('[project]\nname = "x"\nversion = "2026.0b0"\n', "2026.0b1")
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/o/r",
+        "https://github.com/o/r.git",
+        "git@github.com:o/r.git",
+        "ssh://git@github.com/o/r",
+        "https://x-access-token:secret@github.com/o/r.git",
+        "http://local_proxy@127.0.0.1:41234/git/o/r",
+    ],
+)
+def test_repo_from_url(url):
+    assert release.repo_from_url(url) == "o/r"
+
+
 def test_repository_changelog_and_version_agree():
     """CHANGELOG.md parses and pyproject's version is a valid CalVer version."""
     root = Path(__file__).parent.parent
@@ -155,30 +170,41 @@ def repo(tmp_path, monkeypatch):
     return work
 
 
-def test_prepare_commits_the_release_on_main(repo, capsys):
+def test_prepare_commits_and_pushes_the_release(repo, capsys, monkeypatch):
+    waited = []
+    monkeypatch.setattr(release, "wait_for_release", lambda *args: waited.append(args))
     release.main(["prepare", "--repo", "o/r"])
-    assert release.run("git", "log", "-1", "--format=%s") == "Release 2026.0b1"
+    assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Release 2026.0b1"
     changelog = (repo / "CHANGELOG.md").read_text()
     assert "## [2026.0b1](https://github.com/o/r/releases/tag/2026.0b1)" in changelog
     assert "* Mute flaky tests" in changelog  # no PRs: the commits since 2026.0b0
     assert 'version = "2026.0b1"' in (repo / "pyproject.toml").read_text()
-    assert "Push it to publish" in capsys.readouterr().out
-    assert release.run("git", "rev-list", "--count", "origin/main..HEAD").strip() == "1"  # not pushed
-
-
-def test_prepare_push_publishes_to_origin_and_waits(repo, capsys, monkeypatch):
-    waited = []
-    monkeypatch.setattr(release, "wait_for_release", lambda *args: waited.append(args))
-    release.main(["prepare", "--repo", "o/r", "--push"])
-    assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Release 2026.0b1"
     assert "Pushed." in capsys.readouterr().out
     assert waited == [("o/r", release.run("git", "rev-parse", "HEAD"), "2026.0b1")]
 
 
-def test_prepare_push_no_wait(repo, monkeypatch):
+def test_prepare_no_wait(repo, monkeypatch):
     monkeypatch.setattr(release, "wait_for_release", lambda *args: pytest.fail("waited"))
-    release.main(["prepare", "--repo", "o/r", "--push", "--no-wait"])
+    release.main(["prepare", "--repo", "o/r", "--no-wait"])
     assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Release 2026.0b1"
+
+
+def test_prepare_pr_opens_the_pull_request_with_the_rest_api(repo, capsys, monkeypatch):
+    calls = []
+
+    def gh_json(*args):
+        calls.append(args)
+        return {"number": 7, "html_url": "https://x/pull/7"}
+
+    monkeypatch.setattr(release, "gh_json", gh_json)
+    release.main(["prepare", "--repo", "o/r", "--pr"])
+    assert release.run("git", "log", "-1", "--format=%s", "origin/release/2026.0b1") == "Release 2026.0b1"
+    assert release.run("git", "log", "-1", "--format=%s", "origin/main") == "Mute flaky tests"
+    create, label = calls
+    assert create[:4] == ("api", "-X", "POST", "repos/o/r/pulls")
+    assert {"title=Release 2026.0b1", "head=release/2026.0b1", "base=main"} <= set(create)
+    assert label == ("api", "-X", "POST", "repos/o/r/issues/7/labels", "-f", "labels[]=release")
+    assert "Opened https://x/pull/7" in capsys.readouterr().out
 
 
 @pytest.fixture
