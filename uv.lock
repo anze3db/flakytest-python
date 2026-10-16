@@ -97,6 +97,7 @@ py-spy = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "py-spy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -113,6 +114,7 @@ provides-extras = ["py-spy"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.0" },
+    { name = "py-spy", specifier = ">=0.4" },
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
 ]

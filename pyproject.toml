@@ -60,6 +60,7 @@ flakytest = "flakytest.hook"
 [dependency-groups]
 dev = [
   "mypy>=1.0",
+  "py-spy>=0.4",
   "pytest>=8",
   "ruff>=0.6",
 ]
