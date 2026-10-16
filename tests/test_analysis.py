@@ -102,3 +102,13 @@ def test_shared_fixture_teardown_is_labelled(tmp_path):
     result = doc["tests"][0]
     assert result["segments"][0]["label"] == "fixture live_server (session scope)"
     assert result["shared_fixture_time"] == pytest.approx(0.7)
+
+
+def test_sample_in_the_marker_frame_itself(tmp_path):
+    nodeid = "tests/test_a.py::test_a"
+    marker_only = phase_stack(nodeid, "call")[:-1]  # without pytest's from_call below the marker
+    samples = write_tachyon_samples(tmp_path / "s.json", [(marker_only, 3), (phase_stack(nodeid, "call"), 7)])
+    doc = build_profile(run_info(), [process([record(nodeid, call=0.01)], samples, sampled_seconds=0.01)], tmp_path, {})
+    test = doc["tests"][0]
+    assert test["samples"]["call"] == 10
+    assert all(node >= 0 for node, _ in test["stacks"]["call"])
