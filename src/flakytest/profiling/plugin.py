@@ -285,11 +285,10 @@ class ProfilerPlugin:
         (self.run_dir / "profile.json").write_text(json.dumps(self.profile, separators=(",", ":")))
         self.report_path = html.write_report(self.profile, self.run_dir)
         runs.mark_latest(self.run_dir)
-        for leftover in [
-            *self.run_dir.glob("meta-*.json"),
-            *self.run_dir.glob("samples-*"),
-            *self.run_dir.glob("*.ready"),
-        ]:
+        leftovers = [*self.run_dir.glob("meta-*.json"), *self.run_dir.glob("samples-*"), *self.run_dir.glob("*.ready")]
+        if not errors:  # keep the profiler's log when something went wrong
+            leftovers += self.run_dir.glob("sampler-*.log")
+        for leftover in leftovers:
             with contextlib.suppress(OSError):
                 leftover.unlink()
         self.upload_url = cloud.upload_profile(self.profile)

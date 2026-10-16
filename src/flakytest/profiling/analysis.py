@@ -272,6 +272,8 @@ def _build_test(builder: ProfileBuilder, test: dict[str, Any], scopes: dict[str,
             leaf_source = builder.leaf_source(raw_frames[-1]) if raw_frames else ""
             category = stack_category(frames, hints, leaf_source)
             categories[category] += seconds
+            if not ids:  # sampled in the marker frame itself, before pytest's code ran
+                continue
             node = builder.intern_stack(ids)
             builder.stack_categories[node] = category
             phase_stacks.append([node, count])

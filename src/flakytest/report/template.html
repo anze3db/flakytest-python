@@ -304,7 +304,17 @@ function stackPath(node) {
   pathCache.set(node, cached);
   return cached;
 }
-const testFunc = t => t.name.split("[")[0];
+const visibleCache = new Map();
+function visiblePath(node) {
+  let cached = visibleCache.get(node);
+  if (!cached) {
+    const path = stackPath(node);
+    const vis = path.filter(f => frames[f][3] !== "framework" && frames[f][3] !== "native");
+    cached = vis.length ? vis : path.slice(-1);
+    visibleCache.set(node, cached);
+  }
+  return cached;
+}
 
 // Build the group tree: file -> class -> test
 function buildGroups() {
@@ -342,7 +352,8 @@ const ROOT = buildGroups();
 const groupIndex = new Map();
 (function index(g) { groupIndex.set(g.id, g); for (const c of g.children.values()) index(c); })(ROOT);
 
-const state = { selected: "", expanded: new Set(), query: "", filters: new Set(), sortByName: false, hideFramework: true };
+const ROW_LIMIT = 200;
+const state = { selected: "", expanded: new Set(), showAll: new Set(), query: "", filters: new Set(), sortByName: false, hideFramework: true };
 const slowCut = (() => { const d = tests.map(t => t.duration).sort((a, b) => b - a); return d.length ? d[Math.max(0, Math.ceil(d.length * 0.1) - 1)] : 0; })();
 
 function matches(t) {
@@ -370,14 +381,19 @@ function renderTree() {
   const visibleTests = g => g.tests.filter(matches);
   rows.push(rowHtml(ROOT, 0, false, ROOT.duration, ROOT.duration));
   const walk = (g, depth) => {
+    let shown = 0, hidden = 0;
+    const limit = state.showAll.has(g.id) ? Infinity : ROW_LIMIT;
     for (const c of sortChildren(g)) {
       const vis = visibleTests(c);
       if (!vis.length) continue;
+      if (shown >= limit) { hidden++; continue; }
+      shown++;
       const open = c.type !== "test" && (filtering || state.expanded.has(c.id));
       const dur = vis.reduce((a, t) => a + t.duration, 0);
       rows.push(rowHtml(c, depth, open, dur, c.type === "test" ? (slowestTest || 1) : maxDuration));
       if (open) walk(c, depth + 1);
     }
+    if (hidden) rows.push(`<div class="row more" style="--depth:${depth}" data-more="${esc(g.id)}"><span></span><span class="name why">… ${hidden} more (show all)</span><span></span></div>`);
   };
   walk(ROOT, 1);
   el.innerHTML = rows.join("") || `<p class="empty" style="padding:12px">No tests match.</p>`;
@@ -443,8 +459,7 @@ function buildCallTree(list, hideFramework) {
       for (const [node, count] of stacks) {
         const secs = (count / total) * t.phases[phase];
         const cat = stackCats[node] || "library";
-        let path = stackPath(node);
-        if (hideFramework) { const vis = path.filter(f => frames[f][3] !== "framework" && frames[f][3] !== "native"); path = vis.length ? vis : path.slice(-1); }
+        const path = hideFramework ? visiblePath(node) : stackPath(node);
         root.seconds += secs;
         root.cats[cat] = (root.cats[cat] || 0) + secs;
         let n = root;
@@ -469,8 +484,7 @@ function hotFunctions(list, hideFramework) {
     const n = t.samples[phase]; if (!n) continue;
     for (const [node, count] of stacks) {
       const secs = (count / n) * t.phases[phase];
-      let path = stackPath(node);
-      if (hideFramework) { const vis = path.filter(f => frames[f][3] !== "framework" && frames[f][3] !== "native"); path = vis.length ? vis : path.slice(-1); }
+      const path = hideFramework ? visiblePath(node) : stackPath(node);
       const leaf = frames[path[path.length - 1]];
       const key = leaf[0] + "\u0000" + leaf[1];
       self.set(key, (self.get(key) || 0) + secs);
@@ -743,6 +757,7 @@ function select(id, { expand = true, push = true } = {}) {
     const file = t ? t.file : id.split("::")[0];
     state.expanded.add(file);
     if (t && t.class) state.expanded.add(t.file + "::" + t.class);
+    if (t) state.showAll.add(t.class ? t.file + "::" + t.class : t.file);
   }
   if (push) history.replaceState(null, "", id ? "#" + encodeURIComponent(id) : "#");
   renderTree();
@@ -804,6 +819,8 @@ function init() {
     renderTree();
   });
   document.getElementById("tree").addEventListener("click", e => {
+    const more = e.target.closest("[data-more]");
+    if (more) { state.showAll.add(more.dataset.more); renderTree(); return; }
     const row = e.target.closest(".row"); if (!row) return;
     const id = row.dataset.id;
     if (row.dataset.type !== "test" && row.dataset.type !== "root" && (e.target.classList.contains("twisty") || state.selected === id)) {
