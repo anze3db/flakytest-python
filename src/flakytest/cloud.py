@@ -9,6 +9,8 @@ from typing import Any
 import urllib3
 from dotenv import load_dotenv
 
+from flakytest.profiling.parts import split_profile
+
 load_dotenv()
 
 logger = logging.getLogger("flakytest")
@@ -45,11 +47,21 @@ def make_request(url: str, json_data: dict[str, Any], *, compress: bool = False)
 
 
 def upload_profile(profile: dict[str, Any]) -> str | None:
-    """Upload a profile document; returns its URL on flakytest.dev."""
+    """Upload a profile document, in parts for large suites; returns its URL on flakytest.dev."""
     if not token or os.environ.get("FLAKYTEST_UPLOAD", "").lower() in ("0", "false", "no", "off"):
         return None
-    payload = dict(profile)
-    if stash.get("ingest_id"):
-        payload["ingest_id"] = stash["ingest_id"]
-    response = make_request("/profile", payload, compress=True)
-    return response.get("url") if response else None
+    parts = split_profile(profile)
+    url = None
+    failed = 0
+    for part in parts:
+        if stash.get("ingest_id"):
+            part["ingest_id"] = stash["ingest_id"]
+        response = make_request("/profile", part, compress=True)
+        if response:
+            url = url or response.get("url")
+        else:
+            failed += 1
+    if failed:
+        logger.error(f"Flakytest: {failed} of {len(parts)} profile parts weren't uploaded")
+        return None
+    return url

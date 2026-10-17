@@ -7,6 +7,20 @@
 
 Consumers must ignore keys they don't know. Times are seconds (floats), timestamps are ISO 8601 UTC.
 
+## Uploading in parts
+
+A profile is uploaded in parts so no request (and no worker on flakytest.dev) has to hold a whole large suite.
+Each part is a valid profile document with the `run` and `summary`, up to 2,000 tests (fewer if the part would
+be larger than 16 MB of JSON), and only the `frames`, `stacks`, `stack_categories` and `sources` those tests use,
+renumbered. The first part also carries `insights`, `warnings` and `fixtures`. Every part has
+
+```jsonc
+"part": {"index": 0, "count": 18}   // 0-based; a document without "part" is the only part
+```
+
+Parts of one profile share `run.id`; uploading a part again replaces it, so retries and re-uploads are safe.
+flakytest.dev processes each part on its own and shows the profile once all parts are in.
+
 ## How samples are attributed to tests
 
 The plugin runs every test phase (`setup`, `call`, `teardown`) inside a tiny generated function whose
