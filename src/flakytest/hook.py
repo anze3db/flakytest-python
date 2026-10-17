@@ -61,6 +61,14 @@ from flakytest.profiling.plugin import ProfilerPlugin, add_options, profiling_re
 
 test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
 MUTED_TESTS_ENV = "FLAKYTEST_MUTED_TESTS"
+MAX_OUTPUT_LENGTH = 50_000
+
+
+def truncate(text: str) -> str:
+    """The end of long output, where the failure usually is."""
+    if len(text) <= MAX_OUTPUT_LENGTH:
+        return text
+    return "[… truncated by flakytest …]\n" + text[-MAX_OUTPUT_LENGTH:]
 
 
 def get_env_data():
@@ -169,18 +177,20 @@ def pytest_report_teststatus(report):
 
     tests = stash.get("tests", [])
 
+    # Output and tracebacks only matter for tests that didn't pass; skip them for the rest to keep uploads small
+    details = report.outcome not in ("passed", "mute-passed")
     tests.append(
         {
             "name": report.nodeid,
             "location": report.location,
-            "keywords": report.keywords,
+            "keywords": report.keywords if details else {},
             "outcome": report.outcome,
-            "longrepr": str(report.longrepr) if report.longrepr else None,
-            "sections": report.sections,
+            "longrepr": truncate(str(report.longrepr)) if details and report.longrepr else None,
+            "sections": [],
             "duration": report.duration,
-            "caplog": report.caplog,
-            "capstderr": report.capstderr,
-            "capstdout": report.capstdout,
+            "caplog": truncate(report.caplog) if details else "",
+            "capstderr": truncate(report.capstderr) if details else "",
+            "capstdout": truncate(report.capstdout) if details else "",
             "count_towards_summary": report.count_towards_summary,
             "failed": True if report.outcome == "mute-failed" else report.failed,
             "passed": False if report.outcome == "mute-failed" else report.passed,
