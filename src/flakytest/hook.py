@@ -43,6 +43,7 @@
 # def pytest_terminal_summary(terminalreporter, exitstatus, config):
 #     # Add a section?
 #     ...
+import json
 import os
 import sys
 from importlib import metadata
@@ -59,6 +60,7 @@ from flakytest.environment import detect_environment, get_git_data
 from flakytest.profiling.plugin import ProfilerPlugin, add_options, profiling_requested
 
 test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
+MUTED_TESTS_ENV = "FLAKYTEST_MUTED_TESTS"
 
 
 def get_env_data():
@@ -102,6 +104,11 @@ def pytest_configure(config):
     if not token:
         return
 
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        # The pytest-xdist controller reports every test; workers only need to know which ones are muted
+        stash["muted_tests"] = set(json.loads(os.environ.get(MUTED_TESTS_ENV) or "[]"))
+        return
+
     response_json = make_request(
         "/ingest/start",
         {
@@ -119,6 +126,8 @@ def pytest_configure(config):
     stash["ingest_id"] = response_json.get("ingest_id")
     muted_tests = stash["muted_tests"] = {test["name"] for test in response_json.get("muted_tests", [])}
     stash["tests"] = []
+    # pytest-xdist workers inherit the environment
+    os.environ[MUTED_TESTS_ENV] = json.dumps(sorted(muted_tests))
 
     if muted_tests:
         muted_test_str = "\n  ".join(test for test in muted_tests)
