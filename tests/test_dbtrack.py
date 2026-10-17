@@ -10,11 +10,11 @@ def test_query_stats_reports_repeated_queries():
     stats = QueryStats()
     for sql in ["SELECT * FROM orders_item WHERE order_id = 1"] * 4 + ["SELECT * FROM orders_item WHERE order_id = 2"]:
         stats.add(sql, 0.01)
-    stats.add("SAVEPOINT s1", 0.001)
-    stats.add("SAVEPOINT s1", 0.001)
-    stats.add("SAVEPOINT s1", 0.001)
+    for _ in range(6):
+        stats.add("SAVEPOINT s1", 0.001)
+        stats.add("BEGIN", 0.001, "sqlalchemy")
     result = stats.as_dict()
-    assert result["queries"] == 8
+    assert result["queries"] == 17
     assert result["duplicates"] == [
         {"sql": "SELECT * FROM orders_item WHERE order_id = ?", "count": 5, "source": "django"}
     ]

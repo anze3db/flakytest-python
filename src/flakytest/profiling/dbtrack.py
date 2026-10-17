@@ -14,6 +14,8 @@ IN_LIST = re.compile(r"\bIN\s*\((?:\s*(?:%s|\?|:\w+|\$\d+)\s*,?)+\)", re.IGNOREC
 SPACE = re.compile(r"\s+")
 DUPLICATE_THRESHOLD = 3
 MAX_SQL_LENGTH = 300
+# Transaction and session bookkeeping, repeated by design
+CONTROL_STATEMENTS = ("SAVEPOINT", "RELEASE", "ROLLBACK", "BEGIN", "COMMIT", "PRAGMA", "SET ", "SHOW ")
 
 
 def normalize_sql(sql: str) -> str:
@@ -38,9 +40,9 @@ class QueryStats:
     def as_dict(self) -> dict[str, Any]:
         duplicates = [
             {"sql": sql, "count": count, "source": source}
-            for (source, sql), count in self.statements.most_common(5)
-            if count >= DUPLICATE_THRESHOLD and not sql.upper().startswith(("SAVEPOINT", "RELEASE", "ROLLBACK"))
-        ]
+            for (source, sql), count in self.statements.most_common()
+            if count >= DUPLICATE_THRESHOLD and not sql.upper().startswith(CONTROL_STATEMENTS)
+        ][:5]
         return {"queries": self.queries, "time": round(self.time, 6), "duplicates": duplicates}
 
 
