@@ -63,6 +63,22 @@ Every run writes `.flakytest/runs/<run id>/` with:
 
 `.flakytest/` ignores itself in git.
 
+## Memory
+
+Every test's memory is measured too, in whichever process runs it (each pytest-xdist worker measures its
+own tests): how much it needed above what its process already had (its peak), and how much it kept. The
+report lists the tests that needed the most (the **Most memory** filter in the HTML report), each worker's
+peak, and on Linux all workers added up over time, which is what a CI machine needs to avoid running out of
+memory. A process that keeps growing gets a `memory_growth` warning naming the tests it grew in.
+
+Measuring costs well under a millisecond per test. Limitations:
+
+* Exact per-test peaks need Linux, where the kernel's peak counter can be reset per test. On macOS and
+  Windows a test's peak is only known when it raised its process's peak, and `pip install psutil` adds the
+  memory at the start and end of every test.
+* Only the test processes are measured: a database server, a browser or subprocesses aren't included.
+* "Kept" is noisy, since Python and the C allocator often keep freed memory for reuse; peaks are reliable.
+
 ## What it suggests
 
 Each suggestion comes with the time it costs per run, the lines of your code that trigger it, the tests

@@ -21,6 +21,9 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 - The `flakytest` command: `run`, `report` (Markdown/JSON for people and coding agents), `compare`
   (speed and correctness between runs), `serve`, `list`, `upload`, `doctor`, and `mcp`, an MCP server
   over local runs.
+- Memory per test: each test's peak above what its process had and what it kept, the tests that needed the
+  most, each pytest-xdist worker's peak and (on Linux) all workers added up over time, and a warning when a
+  process keeps growing. Exact per-test peaks need Linux; elsewhere install psutil for more detail.
 - With `FLAKYTEST_SECRET_TOKEN`, profiles are uploaded to flakytest.dev, and runs report their
   environment (CI job or developer machine) and changed files.
 

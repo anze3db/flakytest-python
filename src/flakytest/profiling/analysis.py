@@ -3,13 +3,14 @@
 See docs/profile-format.md for the document this builds.
 """
 
+import datetime as dt
 import math
 import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from flakytest.profiling import insights
+from flakytest.profiling import insights, memory
 from flakytest.profiling.frames import (
     CATEGORY_ORDER,
     Frame,
@@ -207,9 +208,12 @@ def build_profile(run: dict[str, Any], processes: list[dict[str, Any]], rootdir:
         seconds_per_sample = sampled_seconds / total_samples
 
     scopes = {f["name"]: f["scope"] for test in tests for f in test.get("fixtures", [])}
-    output_tests = [_build_test(builder, test, scopes) for test in tests]
+    started = dt.datetime.fromisoformat(run["started_at"].replace("Z", "+00:00")).timestamp()
+    output_tests = [_build_test(builder, test, scopes, started) for test in tests]
 
     summary = _summary(output_tests, timeline, seconds_per_sample)
+    source = next((p["memory_source"] for p in processes if p.get("tests") and p.get("memory_source")), None)
+    summary["memory"] = memory.summarize(output_tests, source)
     summary["imports"] = {
         bucket: [
             {"module": module, "seconds": r(count * seconds_per_sample)} for module, count in counter.most_common(10)
@@ -217,6 +221,8 @@ def build_profile(run: dict[str, Any], processes: list[dict[str, Any]], rootdir:
         for bucket, counter in imports.items()
     }
     warnings = _warnings(output_tests, run, total_samples)
+    if growth := memory.growth_warning(summary["memory"], output_tests):
+        warnings.append(growth)
     run["profiler"]["samples"] = total_samples
     run["profiler"]["sample_errors"] = sample_errors
     doc = {
@@ -237,7 +243,9 @@ def build_profile(run: dict[str, Any], processes: list[dict[str, Any]], rootdir:
     return doc
 
 
-def _build_test(builder: ProfileBuilder, test: dict[str, Any], scopes: dict[str, str]) -> dict[str, Any]:
+def _build_test(
+    builder: ProfileBuilder, test: dict[str, Any], scopes: dict[str, str], started: float
+) -> dict[str, Any]:
     samples_by_phase: dict[str, Counter] = test.pop("_samples")
     phases = test["phases"]
     test_func = test["name"].split("[", 1)[0]
@@ -342,6 +350,7 @@ def _build_test(builder: ProfileBuilder, test: dict[str, Any], scopes: dict[str,
         ],
         "hot_lines": top_lines,
         "db": test.get("db"),
+        "memory": memory.test_memory(test.get("memory"), started),
         "longrepr": longrepr[:MAX_LONGREPR] if longrepr else None,
         "warnings": warnings,
     }

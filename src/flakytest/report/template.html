@@ -219,6 +219,7 @@ pre.failure { background: var(--surface-2); padding: 12px; border-radius: 6px; o
           <button class="chip" data-filter="failed" aria-pressed="false">Failed</button>
           <button class="chip" data-filter="slow" aria-pressed="false">Slowest 10%</button>
           <button class="chip" data-filter="warnings" aria-pressed="false">Low samples</button>
+          <button class="chip" data-filter="memory" aria-pressed="false" title="The 10% of tests that needed the most memory">Most memory</button>
           <button class="chip" data-sort="name" aria-pressed="false">Sort by name</button>
         </div>
       </div>
@@ -285,6 +286,12 @@ function fmt(s) {
   if (s >= 0.001) return Math.round(s * 1000) + "ms";
   if (s > 0) return "<1ms";
   return "0ms";
+}
+function bytes(n) {
+  const a = Math.abs(n);
+  if (a >= 1024 ** 3) return (n / 1024 ** 3).toFixed(1) + " GB";
+  if (a >= 1024 ** 2) return Math.round(n / 1024 ** 2) + " MB";
+  return Math.round(n / 1024) + " KB";
 }
 const pct = (a, b) => (b > 0 ? Math.round((a / b) * 100) + "%" : "–");
 const plural = (n, w) => `${n.toLocaleString()} ${n === 1 ? w : w.endsWith("y") ? w.slice(0, -1) + "ies" : w + "s"}`;
@@ -354,6 +361,8 @@ const groupIndex = new Map();
 
 const ROW_LIMIT = 200;
 const state = { selected: "", expanded: new Set(), showAll: new Set(), query: "", filters: new Set(), sortByName: false, hideFramework: true };
+const memoryNeeded = t => (t.memory && t.memory.peak_increase) || 0;
+const memoryCut = (() => { const d = tests.map(memoryNeeded).filter(v => v > 0).sort((a, b) => b - a); return d.length ? d[Math.max(0, Math.ceil(d.length * 0.1) - 1)] : Infinity; })();
 const slowCut = (() => { const d = tests.map(t => t.duration).sort((a, b) => b - a); return d.length ? d[Math.max(0, Math.ceil(d.length * 0.1) - 1)] : 0; })();
 
 function matches(t) {
@@ -362,6 +371,7 @@ function matches(t) {
   if (state.filters.has("failed") && !(t.outcome === "failed" || t.outcome === "error")) return false;
   if (state.filters.has("slow") && t.duration < slowCut) return false;
   if (state.filters.has("warnings") && !t.warnings.length) return false;
+  if (state.filters.has("memory") && memoryNeeded(t) < memoryCut) return false;
   return true;
 }
 
@@ -649,6 +659,35 @@ function dbHtml(agg) {
     ${dups ? `<p class="why" style="margin:0 0 6px">Queries repeated 3 or more times in one test:</p><table><tbody>${dups}</tbody></table>` : `<p class="why" style="margin:0">No query repeated 3 or more times.</p>`}</div>`;
 }
 
+function memoryChart(timeline) {
+  if (!timeline || timeline.length < 2) return "";
+  const w = 640, h = 120, max = Math.max(...timeline.map(p => p[1])) || 1, end = timeline[timeline.length - 1][0] || 1;
+  const x = t => (t / end) * w, y = v => h - (v / max) * (h - 8);
+  const start = x(timeline[0][0]).toFixed(1);
+  const line = `M${start},${y(timeline[0][1]).toFixed(1)}` + timeline.slice(1).map(p => `H${x(p[0]).toFixed(1)}V${y(p[1]).toFixed(1)}`).join("");
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:120px;display:block" role="img" aria-label="Memory over the run">
+    <path d="${line}H${w}V${h}H${start}Z" fill="color-mix(in srgb, var(--f-db) 18%, transparent)"/><path d="${line}H${w}" fill="none" stroke="var(--f-db)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>
+    <p class="why" style="margin:4px 0 0">0 to ${fmt(end)} into the run · peak ${bytes(max)}</p>`;
+}
+
+function memoryHtml(m) {
+  if (!m || !m.peak) return "";
+  const workers = m.processes.length;
+  const hogs = tests.filter(t => memoryNeeded(t) > 0).sort((a, b) => memoryNeeded(b) - memoryNeeded(a)).slice(0, 10);
+  const what = m.private ? "private memory (without the interpreter and shared libraries)" : "memory";
+  const intro = workers > 1
+    ? `The busiest of ${workers} workers peaked at <strong>${bytes(m.peak)}</strong>; together their ${what} peaked at about <strong>${bytes(m.machine_peak || 0)}</strong>, ${fmt(m.machine_peak_at)} into the run.`
+    : `The test process peaked at <strong>${bytes(m.peak)}</strong>.`;
+  const caveat = m.peak_per_test ? "" : `<p class="why" style="margin:6px 0 0">This platform can't reset the peak per test, so a test's peak is only known when it raised the process's peak.</p>`;
+  const rows = hogs.map(t => `<tr class="link" data-goto="${esc(t.nodeid)}"><td><span class="dot o-${t.outcome}"></span>${esc(t.class ? t.class + "::" + t.name : t.name)}<div class="why mono" style="font-size:11.5px">${esc(t.file)}</div></td>
+      <td class="num">${bytes(t.memory.peak_increase)}</td><td class="num">${t.memory.growth != null ? bytes(t.memory.growth) : "?"}</td><td>${esc(t.worker || "")}</td></tr>`).join("");
+  const workerRows = workers > 1 ? `<table style="margin-top:12px"><thead><tr><th>Worker</th><th class="num">Tests</th><th class="num">Peak</th><th class="num">Grew by</th></tr></thead><tbody>` +
+    m.processes.map(p => `<tr><td>${esc(p.worker || "main")}</td><td class="num">${p.tests}</td><td class="num">${p.peak ? bytes(p.peak) : "?"}</td><td class="num">${p.growth != null ? bytes(p.growth) : "?"}</td></tr>`).join("") + `</tbody></table>` : "";
+  return `<h2>Memory</h2><div class="card"><p style="margin:0 0 8px">${intro}</p>${memoryChart(m.timeline)}${caveat}
+    ${rows ? `<table style="margin-top:12px"><thead><tr><th>Needed the most memory</th><th class="num" title="Peak above the memory the process had when the test started">Needed</th><th class="num" title="Memory still in use after the test">Kept</th><th>Worker</th></tr></thead><tbody>${rows}</tbody></table>` : ""}
+    ${workerRows}<p class="why" style="margin:8px 0 0">Resident memory of the test processes only: databases, browsers and subprocesses aren't included.</p></div>`;
+}
+
 function renderOverview() {
   const s = P.summary, run = P.run;
   const total = s.test_time;
@@ -668,6 +707,7 @@ function renderOverview() {
       <div class="tile"><div class="label">Test time</div><div class="value">${fmt(total)}</div><div class="hint">sum of setup + call + teardown</div></div>
       <div class="tile"><div class="label">Outcomes</div><div class="value">${s.passed.toLocaleString()} <span style="font-size:14px;color:var(--good-ink)">passed</span></div><div class="hint">${s.failed} failed · ${s.errors} errors · ${s.skipped} skipped</div></div>
       <div class="tile"><div class="label">Samples</div><div class="value">${run.profiler.samples.toLocaleString()}</div><div class="hint">${run.profiler.backend === "none" ? "no profiler" : `${esc(run.profiler.backend)} @ ${run.profiler.rate} Hz`}</div></div>
+      ${s.memory && s.memory.peak ? `<div class="tile"><div class="label">Peak memory</div><div class="value">${bytes(s.memory.processes.length > 1 && s.memory.machine_peak ? s.memory.machine_peak : s.memory.peak)}</div><div class="hint">${s.memory.processes.length > 1 ? `${s.memory.processes.length} workers together` : "test process"}</div></div>` : ""}
     </div>
     <h2>Session timeline</h2>
     <div class="card"><div class="phasebar">${Object.entries(tl).map(([k, v]) => `<div style="flex:${v / tlTotal};background:${tlColors[k] || "var(--line-strong)"};color:var(--ink)" data-tip="${esc(k.replace(/_/g, " "))}: ${fmt(v)}">${v / tlTotal >= 0.12 ? `${esc(k.replace(/_/g, " "))} ${fmt(v)}` : ""}</div>`).join("")}</div>
@@ -679,6 +719,7 @@ function renderOverview() {
     ${P.insights.length ? P.insights.map(insightHtml).join("") : `<p class="empty">Nothing stands out. Start with the slowest tests below.</p>`}
     <h2>Slowest tests</h2>
     <div class="card">${testsTable(tests, 20)}</div>
+    ${memoryHtml(s.memory)}
     ${fixturesHtml((P.fixtures || []).map(f => ({ ...f })), "Slowest fixtures")}
     ${dbHtml(agg)}
     ${callTreeSection(tests)}
@@ -711,6 +752,14 @@ function renderGroup(g) {
     ${hotFunctionsHtml(list)}`;
 }
 
+function testMemoryHtml(t) {
+  const m = t.memory;
+  if (!m || (m.peak_increase == null && m.growth == null)) return "";
+  const needed = m.peak_increase != null ? `Needed <strong>${bytes(m.peak_increase)}</strong> above the ${bytes(m.start)} its process had when it started (peak ${bytes(m.peak)})` : "Its peak isn't known (it didn't raise the process's peak)";
+  const kept = m.growth != null ? `, and ${m.growth > 0 ? `kept <strong>${bytes(m.growth)}</strong>` : "freed it"} after it finished` : "";
+  return `<h2>Memory</h2><div class="card"><p style="margin:0">${needed}${kept}.</p></div>`;
+}
+
 function renderTest(t) {
   const agg = aggregate([t]);
   const samples = agg.samples;
@@ -724,6 +773,7 @@ function renderTest(t) {
     ${warn}${shared}
     <h2>Where the time goes</h2>
     <div class="card">${phaseBarHtml(t.phases)}<div style="height:10px"></div>${stackBar(t.categories, t.duration)}${legendHtml(t.categories, t.duration)}</div>
+    ${testMemoryHtml(t)}
     ${related.length ? `<h2>Fix next</h2>${related.map(insightHtml).join("")}` : ""}
     <h2>Pieces of work</h2><div class="card">${segmentsHtml(agg.segments, t.duration)}</div>
     <h2>Hot lines in your code</h2><div class="card">${hotLinesHtml(agg.lines)}</div>
@@ -779,6 +829,8 @@ function markdownFor() {
   if (agg.lines.length) lines.push("## Hot lines in project code", ...agg.lines.slice(0, 10).map(l => { const f = frames[l.frame]; return `- ${f[0]}:${f[2]} in ${f[1]} — ${fmt(l.seconds)}${sources[l.frame] ? " — `" + sources[l.frame] + "`" : ""}`; }), "");
   if (agg.dups.length) lines.push("## Repeated queries", ...agg.dups.slice(0, 5).map(d => `- ${d.count}x in ${d.test.name}: \`${d.sql}\``), "");
   if (list.length > 1) lines.push("## Slowest tests", ...[...list].sort((a, b) => b.duration - a.duration).slice(0, 15).map(t => `- ${t.nodeid}: ${fmt(t.duration)} (${whyText(t)})`), "");
+  const hogs = list.filter(t => memoryNeeded(t) > 0).sort((a, b) => memoryNeeded(b) - memoryNeeded(a)).slice(0, 10);
+  if (hogs.length) lines.push("## Memory (peak above the start of each test)", ...hogs.map(t => `- ${t.nodeid}: needed ${bytes(t.memory.peak_increase)}${t.memory.growth != null ? `, kept ${bytes(t.memory.growth)}` : ""}`), "");
   const related = g.type === "root" ? P.insights : P.insights.filter(i => (i.tests || []).some(n => list.some(t => t.nodeid === n)));
   if (related.length) {
     lines.push("## Suggested fixes (ranked by estimated savings)");

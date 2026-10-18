@@ -78,7 +78,20 @@ estimated time is `count / samples_in_phase * phase_duration`.
     "categories": {"db": 140.2, "password_hashing": 40.1},   // estimated seconds, see categories below
     "timeline": {"startup": 2.1, "collection": 3.4, "tests": 77.9, "between_tests": 0.3, "session_teardown": 0.8},
     // the modules being imported while pytest starts and collects
-    "imports": {"collection": [{"module": "tests/test_api.py", "seconds": 1.2}]}
+    "imports": {"collection": [{"module": "tests/test_api.py", "seconds": 1.2}]},
+    // the test processes' memory (bytes, see Memory below); null when it couldn't be measured
+    "memory": {
+      "source": "linux",                 // "linux", "psutil", "maxrss" (how it was measured)
+      "peak_per_test": true,             // whether every test has its own peak (Linux only)
+      "private": true,                   // whether the added-up values are private memory (Linux only)
+      "peak": 734003200,                 // the highest peak RSS of any one process
+      "machine_peak": 2516582400,        // all processes added up: the most the run needed at once
+      "machine_peak_at": 41.2,           // seconds into the run
+      "machine_peak_tests": ["…"],       // the tests running at that moment, at most 20
+      "processes": [{"worker": "gw0", "tests": 204, "peak": 734003200, "start": 98566144, "end": 312475648,
+                     "growth": 213909504}],
+      "timeline": [[0.8, 412090368], …]  // [seconds into the run, all processes added up], at most 120 points
+    }
   },
 
   // Interned frames: [path, function, line, kind]. Paths inside the project are relative to the
@@ -122,6 +135,11 @@ estimated time is `count / samples_in_phase * phase_duration`.
       // database instrumentation (Django execute_wrapper / SQLAlchemy events), when available
       "db": {"queries": 31, "time": 0.42,
              "duplicates": [{"sql": "SELECT … FROM \"orders_item\" WHERE \"order_id\" = %s", "count": 12}]},
+      // the test process's resident memory (bytes): RSS when the test started and ended, the peak while it ran,
+      // and private memory (RssAnon on Linux); keys that couldn't be measured are left out, see Memory below
+      "memory": {"at": 12.31, "start": 104857600, "end": 106954752, "peak": 524288000,
+                 "peak_increase": 419430400, "growth": 2097152,
+                 "private_start": 89128960, "private_end": 91226112},
       "longrepr": null,                  // failure text (trimmed), for failed tests
       "warnings": ["undersampled"]       // see warnings below
     }
@@ -196,3 +214,24 @@ matches any frame of its stack:
 * `profiler_unavailable` — no sampling profiler could attach; durations, fixtures and query counts are
   still exact, but there are no stacks.
 * `sample_errors` — the profiler failed to read a large share of samples.
+* `memory_growth` — a test process's memory grew by at least 256 MB (and half of what it started with) over the
+  run without being freed. `tests` lists the tests it grew most in, `growth` is the growth in bytes.
+
+## Memory
+
+Every test process measures its own memory around each test (setup to teardown), so under pytest-xdist each
+worker measures the tests it runs. `peak_increase` (the peak above `start`) is how much memory the test needed;
+`growth` (`end - start`) is how much it kept.
+
+* **Linux**: the kernel's peak counter (`VmHWM`) is reset before every test by writing `5` to
+  `/proc/self/clear_refs`, so every test gets its own peak. Private memory (`RssAnon`) leaves out the
+  interpreter and shared libraries that every process maps, so processes can be added up for `machine_peak`.
+* **macOS and Windows**: the peak can't be reset, so `peak` is only known for tests that raised their process's
+  peak. With [psutil](https://pypi.org/project/psutil/) installed `start`, `end` and `growth` are known for
+  every test; without it only the raised peaks are (macOS), or nothing (Windows). The values added up across
+  workers are RSS, which counts shared memory once per process.
+* `machine_peak` assumes each worker was at its test's peak for the whole test, so it is an upper bound, and
+  the xdist controller process isn't included.
+* Only the test processes are measured: memory used by a database server, a browser or subprocesses isn't.
+* `growth` is noisy: Python and the C allocator often keep freed memory for reuse, so a test can show growth that
+  later tests reuse. Peaks are reliable.

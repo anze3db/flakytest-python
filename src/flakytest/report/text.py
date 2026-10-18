@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from flakytest.profiling.memory import mb
 from flakytest.report.tree import build_tree, fmt, hot_functions, render_tree
 
 CATEGORY_LABELS = {
@@ -97,6 +98,59 @@ def versus(old: dict[str, Any], new: dict[str, Any]) -> str:
     return ", ".join(parts) + " · flakytest compare"
 
 
+def memory_hogs(profile: dict[str, Any], top: int) -> list[dict[str, Any]]:
+    """The tests that needed the most memory: their peak above the memory the process had when they started."""
+    measured = [t for t in profile["tests"] if (t.get("memory") or {}).get("peak_increase")]
+    return sorted(measured, key=lambda t: -t["memory"]["peak_increase"])[:top]
+
+
+def memory_line(profile: dict[str, Any]) -> str | None:
+    memory = profile["summary"].get("memory")
+    if not memory or not memory.get("peak"):
+        return None
+    parts = [f"peak {mb(memory['peak'])}" + (" per process" if len(memory["processes"]) > 1 else "")]
+    if len(memory["processes"]) > 1 and memory.get("machine_peak"):
+        parts.append(f"{mb(memory['machine_peak'])} across {len(memory['processes'])} workers at once")
+    hogs = memory_hogs(profile, 1)
+    if hogs:
+        parts.append(f"most: {hogs[0]['nodeid']} needed {mb(hogs[0]['memory']['peak_increase'])}")
+    return "Memory: " + " · ".join(parts)
+
+
+def memory_markdown(profile: dict[str, Any], top: int) -> list[str]:
+    memory = profile["summary"].get("memory")
+    if not memory or not memory.get("peak"):
+        return []
+    out = ["", "## Memory", ""]
+    workers = len(memory["processes"])
+    line = f"The test process peaked at {mb(memory['peak'])}"
+    if workers > 1:
+        line = f"The busiest of {workers} workers peaked at {mb(memory['peak'])}"
+        if memory.get("machine_peak"):
+            what = "private memory" if memory.get("private") else "memory"
+            line += f"; together their {what} peaked at about {mb(memory['machine_peak'])}"
+    out.append(line + ".")
+    if not memory.get("peak_per_test"):
+        out.append(
+            "The peak can't be reset per test on this platform, so a test's peak is only known when it raised the "
+            "process's peak; the others show no peak."
+        )
+    hogs = memory_hogs(profile, top)
+    if hogs:
+        out += ["", "| Test | Needed (peak above start) | Kept after the test | Worker |", "|---|---:|---:|---|"]
+        for test in hogs:
+            used = test["memory"]
+            kept = mb(used["growth"]) if used.get("growth") is not None else "?"
+            out.append(f"| `{test['nodeid']}` | {mb(used['peak_increase'])} | {kept} | {test.get('worker') or ''} |")
+    if workers > 1:
+        out += ["", "| Worker | Tests | Peak | Grew by |", "|---|---:|---:|---:|"]
+        for process in memory["processes"]:
+            peak = mb(process["peak"]) if process["peak"] else "?"
+            growth = mb(process["growth"]) if process["growth"] is not None else "?"
+            out.append(f"| {process['worker'] or 'main'} | {process['tests']} | {peak} | {growth} |")
+    return out
+
+
 def terminal_summary(
     profile: dict[str, Any], report_path: Path, upload_url: str | None = None, previous: dict[str, Any] | None = None
 ) -> list[str]:
@@ -116,6 +170,8 @@ def terminal_summary(
         lines.append("Fix next:")
         for number, item in enumerate(profile["insights"][:3], 1):
             lines.append(f"  {number}. [{item['severity']}] {item['title']} (~{fmt(item['impact'])} per run)")
+    if memory := memory_line(profile):
+        lines.append(memory)
     lines.extend(f"⚠ {warning['message']}" for warning in profile["warnings"] if warning["code"] != "short_tests")
     lines.append(f"Report: {report_path}")
     lines.append("  flakytest serve  ·  flakytest report --format markdown  (for agents)")
@@ -203,6 +259,8 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
             f"| `{f['name']}` | {f['scope']} | {f['calls']} | {fmt(f['total'])} | {fmt(f['mean'])} |" for f in fixtures
         ]
 
+    out += memory_markdown(profile, min(top, 10))
+
     if profile["warnings"]:
         out += ["", "## Warnings", ""]
         out += [f"- {warning['message']}" for warning in profile["warnings"]]
@@ -284,6 +342,12 @@ def test_report(profile: dict[str, Any], query: str, *, min_share: float = 0.02)
             out.append(
                 f"Includes {fmt(test['shared_fixture_time'])} setting up or tearing down class/module/session "
                 "fixtures that other tests share."
+            )
+        used = test.get("memory") or {}
+        if used.get("peak_increase") is not None:
+            kept = f", kept {mb(used['growth'])} after it" if used.get("growth") is not None else ""
+            out.append(
+                f"Memory: needed {mb(used['peak_increase'])} above the {mb(used['start'])} it started with{kept}."
             )
         if "undersampled" in test["warnings"] or "low_samples" in test["warnings"]:
             rate = profile["run"]["profiler"]["rate"]

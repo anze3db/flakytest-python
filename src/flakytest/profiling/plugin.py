@@ -23,6 +23,7 @@ from flakytest.environment import detect_environment, get_git_data, platform_inf
 from flakytest.profiling import analysis
 from flakytest.profiling.dbtrack import QueryStats, QueryTracker
 from flakytest.profiling.markers import PhaseMarkers, marker_key
+from flakytest.profiling.memory import MemoryMeter
 from flakytest.profiling.samplers import BACKENDS, DEFAULT_RATES, Sampler, choose_backend
 from flakytest.report import html, runs, text
 
@@ -100,6 +101,7 @@ class ProfilerPlugin:
         self.sampler: Sampler | None = None
         self.markers = PhaseMarkers()
         self.queries = QueryTracker()
+        self.memory = MemoryMeter()
         self.tests: dict[str, dict[str, Any]] = {}
         self.current: dict[str, Any] | None = None
         self.fixture_users: Counter[str] = Counter()
@@ -155,6 +157,7 @@ class ProfilerPlugin:
         self.current = record
         self.queries.current = stats
         self.markers.current_key = record["key"]
+        memory = self.memory.start()
         try:
             yield
         finally:
@@ -163,6 +166,8 @@ class ProfilerPlugin:
             self.current = None
             if stats.queries:
                 record["db"] = stats.as_dict()
+            if used := self.memory.stop(memory):
+                record["memory"] = used
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_fixture_setup(self, fixturedef: Any):
@@ -221,6 +226,7 @@ class ProfilerPlugin:
             "backend_error": self.backend_error,
             "samples_file": str(samples_file) if samples_file else None,
             "sampled_seconds": sampled_seconds,
+            "memory_source": self.memory.source,
             "tests": list(self.tests.values()),
             "fixture_users": dict(self.fixture_users),
             "context": self._context(),
