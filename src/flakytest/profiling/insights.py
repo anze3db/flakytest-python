@@ -235,6 +235,14 @@ def password_hashing(profile: Profile) -> Iterator[dict[str, Any]]:
     )
 
 
+def migrations_time(profile: Profile, seconds: float) -> str:
+    """With pytest-xdist every worker migrates its own test database, in parallel: the sum isn't time anyone waits."""
+    workers = profile.doc["run"].get("workers") or 1
+    if workers > 1:
+        return f"{fmt(seconds)} across {workers} pytest-xdist workers (about {fmt(seconds / workers)} each)"
+    return f"{fmt(seconds)} per run"
+
+
 @rule
 def migrations(profile: Profile) -> Iterator[dict[str, Any]]:
     matched = profile.in_category("migrations")
@@ -260,10 +268,11 @@ def migrations(profile: Profile) -> Iterator[dict[str, Any]]:
         "Stop re-running migrations on every test run",
         category="migrations",
         impact=matched.seconds * 0.9,
-        summary=f"Migrations take {fmt(matched.seconds)} per run, before the first test can start.",
+        summary=f"Migrations take {migrations_time(profile, matched.seconds)}, before the first test can start.",
         fix=fix,
         safety="CI should still build the database from scratch (no --reuse-db) so broken migrations are caught.",
-        docs="https://pytest-django.readthedocs.io/en/latest/database.html#reuse-db-don-t-remove-the-test-database"
+        docs="https://pytest-django.readthedocs.io/en/latest/database.html"
+        "#reuse-db-reuse-the-testing-database-between-test-runs"
         if pytest.get("pytest_django")
         else DJANGO_SPEED_DOCS,
         matched=matched,

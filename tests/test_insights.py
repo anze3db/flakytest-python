@@ -71,3 +71,24 @@ def test_insights_are_sorted_by_impact(tmp_path):
     doc = build(tmp_path, tests, backend="none")
     impacts = [i["impact"] for i in doc["insights"]]
     assert impacts == sorted(impacts, reverse=True)
+
+
+def migrations_doc(tmp_path, workers):
+    stack = phase_stack("tests/test_a.py::test_a", "setup", (f"{SITE}/django/db/migrations/executor.py", "migrate", 1))
+    context = {"pytest": {"pytest_django": "4.11"}}
+    return build(
+        tmp_path, [record("tests/test_a.py::test_a", setup=4.0, call=0.1)], [(stack, 4000)], context, workers=workers
+    )
+
+
+def test_reuse_test_database(tmp_path):
+    insight = next(i for i in migrations_doc(tmp_path, 1)["insights"] if i["id"] == "reuse-test-database")
+    assert "per run" in insight["summary"]
+    assert "--reuse-db" in insight["fix"]
+    assert insight["docs"].endswith("#reuse-db-reuse-the-testing-database-between-test-runs")
+
+
+def test_reuse_test_database_with_xdist_workers(tmp_path):
+    insight = next(i for i in migrations_doc(tmp_path, 4)["insights"] if i["id"] == "reuse-test-database")
+    assert "across 4 pytest-xdist workers" in insight["summary"]
+    assert "per run" not in insight["summary"]
