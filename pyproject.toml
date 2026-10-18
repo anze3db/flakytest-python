@@ -39,7 +39,8 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/anze3db/flakytest-python#readme"
+Documentation = "https://flakytest.dev/docs/"
+Homepage = "https://flakytest.dev"
 Changelog = "https://github.com/anze3db/flakytest-python/blob/main/CHANGELOG.md"
 Issues = "https://github.com/anze3db/flakytest-python/issues"
 Source = "https://github.com/anze3db/flakytest-python"

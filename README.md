@@ -15,6 +15,9 @@ It works locally, needs no account, and is built to be used by coding agents as 
 [flakytest.dev](https://flakytest.dev) is optional: it collects the same profiles from every machine and
 CI job, so you can see why CI is slower than your laptop, and it still tracks flaky tests.
 
+**[Documentation](https://flakytest.dev/docs/)**: how profiling works, every command and option, the report,
+the cloud and what it uploads.
+
 ```console
 $ pip install flakytest
 $ flakytest run
@@ -56,7 +59,7 @@ Every run writes `.flakytest/runs/<run id>/` with:
   `setUp`, the test body, Django's transaction setup…), the hot lines in your code with their source,
   a call tree (pytest internals hidden), hot functions, fixtures, SQL queries and repeated queries
   (N+1), and the suggestions that apply. `flakytest serve` serves it on localhost.
-* `profile.json` — everything in the report, documented in [docs/profile-format.md](docs/profile-format.md).
+* `profile.json` — everything in the report, documented in [docs/profile-format.md](https://github.com/anze3db/flakytest-python/blob/main/docs/profile-format.md).
 
 `.flakytest/` ignores itself in git.
 
@@ -153,6 +156,12 @@ What's uploaded is `profile.json`: test names, outcomes, durations, file paths r
 function names, source lines of the hot spots in your code, normalized SQL of repeated queries, the
 environment name (`local:<user>@<host>` unless you set `FLAKYTEST_ENV`), git branch/commit and changed
 file names. Set `FLAKYTEST_UPLOAD=0` to keep profiles local while still tracking flaky tests.
+
+## Learn more
+
+The [documentation](https://flakytest.dev/docs/) covers everything above in more detail: the report, every
+CLI command, how samples are attributed, the categories and suggestions, CI setup, flaky test
+classification, the cloud's MCP server, uploads and data retention.
 
 ## License
 
