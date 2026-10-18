@@ -1,7 +1,7 @@
 [project]
 name = "flakytest"
 # CalVer: YYYY.0bN = the Nth beta of YYYY (2026.0b0, 2026.0b1, ...). Bumped by scripts/release.py.
-version = "2026.0b0"
+version = "2026.0b1"
 description = 'See where your pytest suite spends its time, why, and what to fix first. Flaky test tracking included.'
 readme = "README.md"
 requires-python = ">=3.11"

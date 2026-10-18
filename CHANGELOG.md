@@ -11,6 +11,10 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+## [2026.0b1](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b1) - 2026-10-18
+
+### Highlights
+
 - Profile your tests: `pytest --flakytest-profile` (or `flakytest run`) samples the whole session with
   tachyon (Python 3.15+) or py-spy, attributes every sample to a test and its setup/call/teardown, and
   writes a local HTML report: time by category (database, password hashing, network, sleep, fixtures,
@@ -26,6 +30,33 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
   process keeps growing. Exact per-test peaks need Linux; elsewhere install psutil for more detail.
 - With `FLAKYTEST_SECRET_TOKEN`, profiles are uploaded to flakytest.dev, and runs report their
   environment (CI job or developer machine) and changed files.
+
+### Changes
+
+* Release with REST-only gh calls; --no-dry-run pushes
+* Profile tests with a sampling profiler and report where their time goes
+* Document profiling, the report, agent usage and the profile format
+* Sharpen the report: shared fixtures, previous-run comparison, ORM-specific N+1 advice
+* Install py-spy for development so the sampler tests run on every Python
+* Keep the report fast on large suites and skip samples taken in the marker frame
+* Test samples taken in the marker frame
+* Report each test once under pytest-xdist
+* Leave transaction statements out of repeated queries
+* Send captured output and tracebacks only for tests that didn't pass
+* Upload profiles in parts so large suites fit
+* Document that profile uploads are idempotent
+* Link the documentation on flakytest.dev from PyPI and the README
+* Measure memory per test, per xdist worker and across workers
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/flakytest-python/compare/2026.0b0...2026.0b1
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [2026.0b0](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b0) - 2026-10-14
 
