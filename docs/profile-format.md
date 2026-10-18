@@ -18,8 +18,9 @@ renumbered. The first part also carries `insights`, `warnings` and `fixtures`. E
 "part": {"index": 0, "count": 18}   // 0-based; a document without "part" is the only part
 ```
 
-Parts of one profile share `run.id`; uploading a part again replaces it, so retries and re-uploads are safe.
-flakytest.dev processes each part on its own and shows the profile once all parts are in.
+Parts of one profile share `run.id`. Uploads are idempotent: the same part again changes nothing, and a changed
+part replaces the old one, so retries and re-uploads are safe. flakytest.dev processes the parts in parallel and
+counts the profile in its trends once all parts are in.
 
 ## How samples are attributed to tests
 
