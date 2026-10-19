@@ -27,8 +27,9 @@ TRANSPARENT = {
     "anyio/_backends/_asyncio.py": None,
 }
 
-# Checked in this order against every frame of a sample, the first category that matches wins.
-# Each entry: category, [(module path prefix, function names or None for any)]
+# What kind of work a frame does. Each entry: category, [(module path prefix, function names or None for any)];
+# the first entry that matches a frame gives its category. How a sample's frames decide its category: see
+# stack_category().
 CATEGORY_RULES: list[tuple[str, list[tuple[str, frozenset[str] | None]]]] = []
 
 
@@ -91,29 +92,38 @@ _rule(
     "piccolo/",
 )
 _rule("cache", "redis/", "valkey/", "pymemcache/", "pylibmc/", "django/core/cache/", "django_redis/")
+# Only real socket I/O is network: an HTTP client's own work (botocore loading service models, building
+# requests, parsing JSON) is whatever it does, and the client frame only marks which caller made the call
 _rule(
     "network",
     "socket.py",
+    funcs=(
+        "recv",
+        "recv_into",
+        "recvfrom",
+        "recvfrom_into",
+        "readinto",
+        "send",
+        "sendall",
+        "sendto",
+        "sendfile",
+        "connect",
+        "connect_ex",
+        "accept",
+        "create_connection",
+        "getaddrinfo",
+    ),
+)
+_rule(
+    "network",
     "ssl.py",
-    "http/client.py",
-    "urllib/request.py",
-    "urllib3/",
-    "requests/",
-    "httpx/",
-    "httpcore/",
-    "aiohttp/",
-    "botocore/",
-    "boto3/",
-    "grpc/",
-    "websockets/",
-    "h11/",
-    "smtplib.py",
-    "dns/",
+    funcs=("read", "write", "recv", "recv_into", "send", "sendall", "do_handshake", "connect", "connect_ex"),
 )
 _rule("sleep", "asyncio/tasks.py", funcs=("sleep",))
 _rule("waiting", "threading.py", funcs=("wait", "join", "_wait_for_tstate_lock", "acquire"))
 _rule("waiting", "queue.py", funcs=("get", "put", "join"))
-_rule("waiting", "selectors.py", "concurrent/futures/")
+_rule("waiting", "selectors.py", funcs=("select", "poll"))
+_rule("waiting", "concurrent/futures/", funcs=("result", "wait", "as_completed", "_result_or_cancel", "shutdown"))
 _rule("template", "django/template/", "jinja2/", "mako/", "chameleon/")
 _rule("factories", "factory/", "model_bakery/", "faker/", "mixer/", "polyfactory/", "hypothesis/", "mimesis/")
 _rule("mocking", "unittest/mock.py", "pytest_mock/", "freezegun/", "time_machine/", "responses/", "respx/")
@@ -131,6 +141,15 @@ _rule(
     "xml/",
 )
 _rule("logging", "logging/")
+
+# Categories that hold for everything below them, whatever it does (an import that queries the database is
+# import time): the one closest to the root wins
+CONTEXT_CATEGORIES = frozenset(
+    ("imports", "password_hashing", "migrations", "db_schema", "fixture_loading", "browser", "subprocess")
+)
+# Clients that do their own socket I/O and waiting: network or waiting below them is theirs
+OWNING_CATEGORIES = frozenset(("db", "cache"))
+OWNED_CATEGORIES = frozenset(("network", "waiting"))
 
 CATEGORY_ORDER = [category for category, _ in CATEGORY_RULES] + [
     "test_code",
@@ -179,14 +198,16 @@ class FrameClassifier:
         key = (filename, func, line)
         frame = self._cache.get(key)
         if frame is None:
-            path, kind, module = self._locate(filename)
+            path, kind, module = self._locate(filename, func)
             if kind in ("lib", "stdlib") and _is_wrapper(module, func):
                 kind = "framework"
             frame = self._cache[key] = Frame(path=path, func=func, line=line, kind=kind, module=module)
         return frame
 
-    def _locate(self, filename: str) -> tuple[str, str, str]:
+    def _locate(self, filename: str, func: str = "") -> tuple[str, str, str]:
         """(display path, kind, module) for a filename."""
+        if filename == "~" and func.startswith("<"):  # tachyon's synthetic frames: <GC>, <native>
+            return func, "native", func
         if not filename or filename in ("~", "<GC>", "<native>") or filename.startswith("<native"):
             return filename or "<unknown>", "native", filename or "<unknown>"
         if filename.startswith("<frozen "):
@@ -241,22 +262,46 @@ def source_line(filename: str, line: int) -> str:
     return linecache.getline(filename, line).strip()
 
 
-def stack_category(frames: list[Frame], hints: list[str | None], leaf_source: str) -> str:
-    """The category of a sample from its frames (root first) and each frame's frame_category()."""
+# The category state of a stack, carried from the root to the leaf: (context, deepest other category,
+# deepest owning category). NO_STATE before any frame matched.
+State = tuple[str | None, str | None, str | None]
+NO_STATE: State = (None, None, None)
+
+
+def descend(state: State, hint: str | None) -> State:
+    """The state below a frame whose frame_category() is hint."""
+    if hint is None:
+        return state
+    context, deepest, owner = state
+    if hint in CONTEXT_CATEGORIES:
+        return state if context else (hint, deepest, owner)
+    return context, hint, hint if hint in OWNING_CATEGORIES else owner
+
+
+def resolve(state: State, leaf: Frame | None, leaf_hint: str | None, leaf_source: str) -> str:
+    """A sample's category from the state at its leaf frame.
+
+    The garbage collector (always the leaf) wins, then a sleep() on the sampled line, then the context closest
+    to the root (imports, migrations, …), then the deepest resource or code category (database, network,
+    serialization, …), where network or waiting below a database or cache client belongs to the client.
+    """
+    if leaf_hint == "gc":
+        return "gc"
     if leaf_source and SLEEP_LINE.search(leaf_source):
         return "sleep"
-    best = None
-    best_rank = len(CATEGORY_ORDER)
-    for hint in hints:
-        if hint is not None:
-            rank = CATEGORY_RANK[hint]
-            if rank < best_rank:
-                best, best_rank = hint, rank
-    if best is not None:
-        return best
-    if not frames:
+    context, deepest, owner = state
+    if context:
+        return context
+    if deepest:
+        return owner if deepest in OWNED_CATEGORIES and owner else deepest
+    if leaf is None:
         return "pytest"
-    return FALLBACK_BY_KIND.get(frames[-1].kind, "library")
+    return FALLBACK_BY_KIND.get(leaf.kind, "library")
 
 
-CATEGORY_RANK = {category: rank for rank, category in enumerate(CATEGORY_ORDER)}
+def stack_category(frames: list[Frame], hints: list[str | None], leaf_source: str) -> str:
+    """The category of a sample from its frames (root first) and each frame's frame_category()."""
+    state = NO_STATE
+    for hint in hints:
+        state = descend(state, hint)
+    return resolve(state, frames[-1] if frames else None, hints[-1] if hints else None, leaf_source)

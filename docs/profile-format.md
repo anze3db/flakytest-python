@@ -175,35 +175,42 @@ estimated time is `count / samples_in_phase * phase_duration`.
 
 ## Categories
 
-Every sample below a marker is assigned exactly one category by the first rule (in this order) that
-matches any frame of its stack:
+Every sample below a marker is assigned exactly one category from its frames:
 
-| category            | matches                                                                  |
-|---------------------|--------------------------------------------------------------------------|
-| `gc`                | the garbage collector (`<GC>` frames)                                    |
-| `imports`           | importlib                                                                |
-| `password_hashing`  | django.contrib.auth.hashers, bcrypt, argon2, passlib, hashlib.pbkdf2     |
-| `migrations`        | django.db.migrations, alembic                                            |
-| `db_schema`         | Django flush / create test db, SQLAlchemy `create_all` / `drop_all`      |
-| `fixture_loading`   | Django loaddata / serializers                                            |
-| `browser`           | selenium, playwright                                                     |
-| `subprocess`        | subprocess, multiprocessing, testcontainers, docker                      |
-| `db`                | django.db, psycopg, psycopg2, sqlite3, sqlalchemy, asyncpg, pymysql, …   |
-| `cache`             | redis, memcache, Django cache backends                                   |
-| `network`           | socket, ssl, http.client, urllib3, requests, httpx, aiohttp, botocore    |
-| `sleep`             | `time.sleep(…)` on the sampled line, `asyncio.sleep`                     |
-| `waiting`           | `Event.wait`, `Thread.join`, `Queue.get`, `select()`                     |
-| `template`          | django.template, jinja2, mako                                            |
-| `factories`         | factory_boy, model_bakery, faker, mixer, hypothesis                      |
-| `mocking`           | unittest.mock, pytest-mock, freezegun, time-machine, responses           |
-| `copying`           | copy.deepcopy (Django `setUpTestData` copies class attributes per test)  |
-| `serialization`     | json, pickle, pydantic, marshmallow, DRF serializers, yaml               |
-| `logging`           | logging                                                                  |
-| `test_code`         | leaf frame in a test file                                                |
-| `app_code`          | leaf frame in project code                                               |
-| `pytest`            | leaf frame in pytest, pluggy, unittest or a wrapper around the test      |
-| `library`           | anything else                                                            |
-| `unsampled`         | a phase that got no samples (its measured duration)                      |
+1. The garbage collector wins outright: it's always the leaf frame (`<GC>`).
+2. A `sleep(…)` call on the sampled line is `sleep`.
+3. **Context** categories hold for everything below them, whatever it does: the one closest to the root wins
+   (an import that queries the database is import time).
+4. Otherwise the **deepest** resource or code category wins (JSON parsing inside an HTTP client is serialization).
+   Network or waiting below a database or cache client belongs to that client.
+5. Otherwise the leaf frame decides: `test_code`, `app_code`, `pytest` or `library`.
+
+| category            | tier     | matches                                                                  |
+|---------------------|----------|--------------------------------------------------------------------------|
+| `gc`                | leaf     | the garbage collector (`<GC>` frames)                                    |
+| `imports`           | context  | importlib                                                                |
+| `password_hashing`  | context  | django.contrib.auth.hashers, bcrypt, argon2, passlib, hashlib.pbkdf2     |
+| `migrations`        | context  | django.db.migrations, alembic                                            |
+| `db_schema`         | context  | Django flush / create test db, SQLAlchemy `create_all` / `drop_all`      |
+| `fixture_loading`   | context  | Django loaddata / serializers                                            |
+| `browser`           | context  | selenium, playwright                                                     |
+| `subprocess`        | context  | subprocess, multiprocessing, testcontainers, docker                      |
+| `db`                | deepest  | django.db, psycopg, psycopg2, sqlite3, sqlalchemy, asyncpg, pymysql, …   |
+| `cache`             | deepest  | redis, memcache, Django cache backends                                   |
+| `network`           | deepest  | socket and ssl I/O only (`recv`, `send`, `connect`, `getaddrinfo`, TLS handshakes); an HTTP client's own work (building requests, parsing responses) is whatever it does |
+| `sleep`             | deepest  | `time.sleep(…)` on the sampled line, `asyncio.sleep`                     |
+| `waiting`           | deepest  | `Event.wait`, `Thread.join`, `Queue.get`, `select()`, `Future.result`    |
+| `template`          | deepest  | django.template, jinja2, mako                                            |
+| `factories`         | deepest  | factory_boy, model_bakery, faker, mixer, hypothesis                      |
+| `mocking`           | deepest  | unittest.mock, pytest-mock, freezegun, time-machine, responses           |
+| `copying`           | deepest  | copy.deepcopy (Django `setUpTestData` copies class attributes per test)  |
+| `serialization`     | deepest  | json, pickle, pydantic, marshmallow, DRF serializers, yaml               |
+| `logging`           | deepest  | logging                                                                  |
+| `test_code`         | fallback | leaf frame in a test file                                                |
+| `app_code`          | fallback | leaf frame in project code                                               |
+| `pytest`            | fallback | leaf frame in pytest, pluggy, unittest or a wrapper around the test      |
+| `library`           | fallback | anything else                                                            |
+| `unsampled`         |          | a phase that got no samples (its measured duration)                      |
 
 ## Warnings
 
