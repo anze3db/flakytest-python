@@ -18,3 +18,13 @@ def test_query_stats_reports_repeated_queries():
     assert result["duplicates"] == [
         {"sql": "SELECT * FROM orders_item WHERE order_id = ?", "count": 5, "source": "django"}
     ]
+
+
+def test_statements_that_differ_only_in_literals_are_counted_together():
+    stats = QueryStats()
+    for size in range(1, 5):
+        stats.add(f"SELECT * FROM t WHERE id IN ({', '.join(['%s'] * size)})", 0.001)  # noqa: S608
+    stats.add("  release savepoint s1", 0.001)
+    assert stats.statements[("django", "  release savepoint s1")] == 0  # control statements aren't kept
+    assert stats.as_dict()["duplicates"] == [{"sql": "SELECT * FROM t WHERE id IN (…)", "count": 4, "source": "django"}]
+    assert "commits" not in stats.as_dict()  # only reported where commits are measured (Django)
