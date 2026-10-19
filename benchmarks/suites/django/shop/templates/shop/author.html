@@ -1,0 +1,1 @@
+<h1>{{ author.name }}</h1>{% for book in books %}<h2>{{ book.title }}</h2>{% for review in book.reviews.all %}<p>{{ review.stars }}: {{ review.text|truncatewords:5 }}</p>{% endfor %}{% endfor %}

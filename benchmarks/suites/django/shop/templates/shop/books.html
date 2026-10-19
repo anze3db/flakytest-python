@@ -1,0 +1,1 @@
+<ul>{% for book in books %}<li>{{ book.title|title }} by {{ book.author.name }}: {{ book.price }} ({{ book.n }} reviews, {{ book.avg|floatformat:1 }})</li>{% endfor %}</ul>
