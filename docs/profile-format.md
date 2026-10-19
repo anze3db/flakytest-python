@@ -5,6 +5,10 @@
 `flakytest report` summarises for people and agents, and what is uploaded to flakytest.dev
 (`POST /api/v1/profile`, gzip-compressed, `Authorization: <FLAKYTEST_SECRET_TOKEN>`).
 
+Next to it, `profile.js` is the same document as a script (`window.FLAKYTEST_PROFILE = {…};`) that `index.html`
+loads, so the report works straight from disk, and `summary.json` has just each test's node id, duration and
+outcome (and the run's id and duration), which is all the next run needs to compare itself with this one.
+
 Consumers must ignore keys they don't know. Times are seconds (floats), timestamps are ISO 8601 UTC.
 
 ## Uploading in parts
@@ -12,7 +16,7 @@ Consumers must ignore keys they don't know. Times are seconds (floats), timestam
 A profile is uploaded in parts so no request (and no worker on flakytest.dev) has to hold a whole large suite.
 Each part is a valid profile document with the `run` and `summary`, up to 2,000 tests (fewer if the part would
 be larger than 16 MB of JSON), and only the `frames`, `stacks`, `stack_categories` and `sources` those tests use,
-renumbered. The first part also carries `insights`, `warnings` and `fixtures`. Every part has
+renumbered. The first part also carries `insights`, `warnings`, `fixtures` and `suite_stacks`. Every part has
 
 ```jsonc
 "part": {"index": 0, "count": 18}   // 0-based; a document without "part" is the only part
@@ -33,7 +37,20 @@ marker frame are classified by the pytest hooks on their stack (`startup`, `coll
 `session_teardown`, `other`).
 
 The pytest durations are exact; sample counts only decide how a phase's duration is split. A stack's
-estimated time is `count / samples_in_phase * phase_duration`.
+estimated time is `count / samples_in_phase * phase_duration`. Counts are weighted: tachyon samples a test at a
+quarter of the rate once it has 200 samples, and big suites (over 10,000 tests) at 500 Hz unless
+`--flakytest-rate` says otherwise; each sample then counts as the samples it stands for at the run's `rate`.
+
+With tachyon, other threads are sampled while the main thread isn't running Python (it waits on a thread pool, a
+lock or I/O), and tied to the test phase the main thread is in at that instant. When the main thread waited while
+other threads worked, the waiting time is split between what they did (`threads`, `thread_stacks`); threads that
+wait too, or only run the standard library and pytest's plumbing, don't count. py-spy aggregates samples per
+stack, so with it other threads are left out.
+
+Every test process builds its part of the document when its session ends (under pytest-xdist the workers do that
+at the same time) and the controller merges them. A worker that crashes leaves no part: the controller builds it
+from the records the worker wrote as each test finished and the samples its profiler wrote, and takes any test it
+didn't record from pytest's reports (exact duration and outcome only). The `missing_workers` warning says so.
 
 ## Document
 
@@ -120,10 +137,15 @@ estimated time is `count / samples_in_phase * phase_duration`.
       "duration": 1.82,
       "phases": {"setup": 1.2, "call": 0.6, "teardown": 0.02},
       "samples": {"setup": 1190, "call": 602, "teardown": 21},
-      // per phase, [stack index, sample count]
+      // per phase, [stack index, sample count]. Empty for tests faster than 100 ms outside the 2,000 slowest of
+      // their process: their samples are folded into "suite_stacks" to keep the document small
       "stacks": {"setup": [[3, 900], [4, 290]], "call": […], "teardown": […]},
-      // exact fixture setup times for fixtures this test executed (cached ones are omitted)
-      "fixtures": [{"name": "db", "scope": "function", "duration": 0.31}],
+      // exact setup times of the fixtures this test executed (cached ones are omitted) that took 5 ms or more, or
+      // have a wider scope than function; "fixtures" below has every call. A class/module/session fixture's
+      // queries and the private memory it kept are its own, not the test's
+      "fixtures": [{"name": "db", "scope": "function", "duration": 0.31},
+                   {"name": "django_db_setup", "scope": "session", "duration": 9.1,
+                    "db": {"queries": 412, "time": 2.1, "duplicates": […]}, "memory": 31457280}],
       // setup time of class/module/session fixtures this test happened to trigger first
       "shared_fixture_time": 0.0,
       // estimated seconds per category, see below; they add up to "duration"
@@ -132,21 +154,39 @@ estimated time is `count / samples_in_phase * phase_duration`.
       "segments": [{"phase": "setup", "label": "fixture django_db_setup", "frame": 12, "seconds": 0.9}],
       // the deepest frame in project code (kind test/app) for each sample: "which line of mine is slow"
       "hot_lines": [{"frame": 0, "seconds": 0.5, "categories": {"db": 0.45}}],
-      // database instrumentation (Django execute_wrapper / SQLAlchemy events), when available
+      // database instrumentation (Django execute_wrapper / SQLAlchemy events), when available; with Django also
+      // commits and writes outside a transaction (each one commits on its own): what durability costs
       "db": {"queries": 31, "time": 0.42,
-             "duplicates": [{"sql": "SELECT … FROM \"orders_item\" WHERE \"order_id\" = %s", "count": 12}]},
+             "duplicates": [{"sql": "SELECT … FROM \"orders_item\" WHERE \"order_id\" = %s", "count": 12}],
+             "commits": 0, "commit_time": 0.0, "autocommit_writes": 2, "autocommit_write_time": 0.004},
+      // other threads that worked while this test's main thread waited (tachyon only): how many, and what they
+      // did, which the categories above count instead of the waiting
+      "threads": {"count": 4, "seconds": 6.1, "categories": {"network": 3.7, "serialization": 1.8}},
+      // per phase, [stack index, estimated seconds] of those threads' samples
+      "thread_stacks": {"call": [[41, 2.2], …]},
+      // one-off costs this test paid for whichever test runs first: a fixture's first call in its process that was
+      // much slower than its other calls (over 0.5 s and 10x the median), and imports
+      "warmup": {"seconds": 4.6, "causes": [{"what": "first mock_aws_services call in gw2", "seconds": 4.6}]},
       // the test process's resident memory (bytes): RSS when the test started and ended, the peak while it ran,
       // and private memory (RssAnon on Linux); keys that couldn't be measured are left out, see Memory below
       "memory": {"at": 12.31, "start": 104857600, "end": 106954752, "peak": 524288000,
                  "peak_increase": 419430400, "growth": 2097152,
-                 "private_start": 89128960, "private_end": 91226112},
+                 "private_start": 89128960, "private_end": 91226112,
+                 "warmup": "first test in its process"},   // or "first test in its class"; absent otherwise
       "longrepr": null,                  // failure text (trimmed), for failed tests
-      "warnings": ["undersampled"]       // see warnings below
+      "warnings": ["undersampled"]       // see warnings below; "worker_crashed" / "not_recorded" for tests
+                                         // known only from pytest's reports
     }
   ],
 
+  // the folded tests' samples (see "stacks" above) as one tree: [stack index, category, estimated seconds];
+  // nodes with less than 0.02% of its time are merged into their parent
+  "suite_stacks": [[7, "db", 12.5], …],
+
   // aggregated exact fixture timings across the session
-  "fixtures": [{"name": "django_db_setup", "scope": "session", "calls": 1, "total": 9.1, "max": 9.1, "tests": 1}],
+  // median and p99 come from a histogram (within ~12%); over_1s counts calls that took more than a second
+  "fixtures": [{"name": "django_db_setup", "scope": "session", "calls": 1, "total": 9.1, "max": 9.1, "mean": 9.1,
+                "median": 9.1, "p99": 9.1, "over_1s": 1, "tests": 1}],
 
   // "fix next" suggestions, sorted by estimated impact
   "insights": [
@@ -221,18 +261,31 @@ Every sample below a marker is assigned exactly one category from its frames:
 * `profiler_unavailable` — no sampling profiler could attach; durations, fixtures and query counts are
   still exact, but there are no stacks.
 * `sample_errors` — the profiler failed to read a large share of samples.
+* `missing_workers` — pytest-xdist workers crashed (`workers` lists them). Their recorded tests are in the
+  profile; tests they didn't record have only exact durations and outcomes.
+* `samples_incomplete` — a profiler didn't finish writing its samples (its process was killed), so the last tests'
+  breakdowns are missing.
 * `memory_growth` — a test process's memory grew by at least 256 MB (and half of what it started with) over the
   run without being freed. `tests` lists the tests it grew most in, `growth` is the growth in bytes.
 
 ## Memory
 
-Every test process measures its own memory around each test (setup to teardown), so under pytest-xdist each
-worker measures the tests it runs. `peak_increase` (the peak above `start`) is how much memory the test needed;
-`growth` (`end - start`) is how much it kept.
+Every test process measures its own memory around each test, so under pytest-xdist each worker measures the tests
+it runs. A test's window starts before its setup and ends when the next test starts, so what pytest frees after a
+test isn't counted as kept. `peak_increase` is how much memory the test needed above what it started with;
+`growth` is how much it kept.
 
 * **Linux**: the kernel's peak counter (`VmHWM`) is reset before every test by writing `5` to
-  `/proc/self/clear_refs`, so every test gets its own peak. Private memory (`RssAnon`) leaves out the
-  interpreter and shared libraries that every process maps, so processes can be added up for `machine_peak`.
+  `/proc/self/clear_refs`, so every test gets its own peak. What a test needed and kept is private memory
+  (`RssAnon`): resident memory also counts file pages (the interpreter, libraries, mapped files) that the kernel
+  drops and reads back as it likes, especially in a memory-limited container. The peak counter only exists for
+  resident memory as a whole, so `peak_increase` is the peak less the larger of the file-backed memory the test
+  started and ended with, less the private memory it started with. Private memory leaves out what every process
+  maps, so processes can be added up for `machine_peak`.
+* Class, module and session fixtures restart a test's window when they finish: the private memory they keep is
+  recorded on the fixture (`fixtures[].memory`), not charged to the test that happened to run them first. The first
+  test in each process and class is flagged (`memory.warmup`); reports leave them, and tests that set up a shared
+  fixture, out of the tests that needed the most memory.
 * **macOS and Windows**: the peak can't be reset, so `peak` is only known for tests that raised their process's
   peak. With [psutil](https://pypi.org/project/psutil/) installed `start`, `end` and `growth` are known for
   every test; without it only the raised peaks are (macOS), or nothing (Windows). The values added up across

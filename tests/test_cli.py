@@ -101,15 +101,15 @@ def test_mcp_server(project):
     assert responses[4]["error"]["code"] == -32602
 
 
-def test_html_report_embeds_profile_safely(project):
+def test_html_report_loads_the_profile_from_a_script(project, tmp_path):
     profile = runs.load_profile(runs.resolve_run(project, "latest"))
     profile["tests"][0]["longrepr"] = "</script><script>alert(1)</script>"
-    page = html.render(profile)
-    assert "</script><script>alert(1)" not in page
-    start = page.index('<script id="profile-data" type="application/json">') + len(
-        '<script id="profile-data" type="application/json">'
-    )
-    data = json.loads(page[start : page.index("</script>", start)])
+    page = html.write_report(json.dumps(profile), tmp_path).read_text()
+    assert '<script src="profile.js"></script>' in page
+    assert "alert(1)" not in page  # the data isn't in the page, so it can't break out of a <script>
+    script = (tmp_path / "profile.js").read_text()
+    assert script.startswith(html.DATA_PREFIX)
+    data = json.loads(script.removeprefix(html.DATA_PREFIX).rstrip().removesuffix(";"))
     assert data["tests"][0]["longrepr"] == "</script><script>alert(1)</script>"
 
 

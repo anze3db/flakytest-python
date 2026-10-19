@@ -16,9 +16,11 @@ sync:
 
 # Run the tests; arguments go to pytest (`just test tests/test_hook.py -x`)
 # tests/test_flake.py fails on purpose unless FLAKYTEST_SECRET_TOKEN is set and flakytest.dev mutes it
+# pytest-xdist and Django are only for the suites in tests/test_accuracy.py: they aren't dev dependencies because
+# they need pytest 7+, and CI also tests pytest 6
 [group("test")]
 test *args:
-    uv run pytest "$@"
+    uv run --with pytest-xdist --with django pytest "$@"
 
 # Run the tests on another Python and pytest (`just test-on 3.11 6`)
 [group("test")]

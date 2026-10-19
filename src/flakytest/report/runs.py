@@ -63,3 +63,26 @@ def resolve_run(root: Path, ref: str | None = None) -> Path | None:
 
 def load_profile(run_dir: Path) -> dict[str, Any]:
     return json.loads((run_dir / "profile.json").read_text())
+
+
+SUMMARY_FILE = "summary.json"
+
+
+def write_summary(profile: dict[str, Any], run_dir: Path) -> None:
+    """What comparing with a later run needs, so it doesn't have to load the whole profile."""
+    summary = {
+        "run": {key: profile["run"].get(key) for key in ("id", "started_at", "duration", "exit_status")},
+        "tests": [
+            {"nodeid": test["nodeid"], "duration": test["duration"], "outcome": test["outcome"]}
+            for test in profile["tests"]
+        ],
+    }
+    (run_dir / SUMMARY_FILE).write_text(json.dumps(summary, separators=(",", ":")))
+
+
+def load_summary(run_dir: Path) -> dict[str, Any]:
+    """A run's summary.json; runs from before it existed fall back to their profile."""
+    path = run_dir / SUMMARY_FILE
+    if path.exists():
+        return json.loads(path.read_text())
+    return load_profile(run_dir)

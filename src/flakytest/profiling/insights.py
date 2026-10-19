@@ -6,8 +6,11 @@ estimates how many seconds per run the problem costs, and explains the fix and h
 
 from collections import defaultdict
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+from flakytest.profiling.frames import source_line
+from flakytest.profiling.matchers import Matched
 
 MAX_TESTS = 20
 MAX_LOCATIONS = 10
@@ -15,104 +18,64 @@ DJANGO_TESTING_DOCS = "https://docs.djangoproject.com/en/stable/topics/testing/o
 DJANGO_SPEED_DOCS = "https://docs.djangoproject.com/en/stable/topics/testing/overview/#speeding-up-the-tests"
 
 
-@dataclass
-class Sample:
-    test: int
-    phase: str
-    seconds: float
-    frames: tuple[int, ...]
-    category: str
-
-
 class Profile:
-    """Read helpers over a profile document."""
+    """Read helpers over a profile document and what its samples matched (see matchers.py)."""
 
-    def __init__(self, doc: dict[str, Any], context: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        doc: dict[str, Any],
+        context: dict[str, Any],
+        matched: dict[str, Matched] | None = None,
+        rootdir: Path | None = None,
+    ) -> None:
         self.doc = doc
         self.context = context
+        self.matched = matched or {}
+        self.rootdir = rootdir
         self.tests = doc["tests"]
         self.frames = doc["frames"]
-        self.nodes = doc["stacks"]
-        self.categories = doc.get("stack_categories", {})
         self.test_time = doc["summary"]["test_time"] or 0.0
         self.wall = doc["run"].get("duration") or self.test_time
-        self._paths: dict[int, tuple[int, ...]] = {}
-        self._samples: list[Sample] | None = None
 
-    def path(self, node: int) -> tuple[int, ...]:
-        cached = self._paths.get(node)
-        if cached is None:
-            parent, frame = self.nodes[node]
-            cached = (*self.path(parent), frame) if parent >= 0 else (frame,)
-            self._paths[node] = cached
-        return cached
+    def in_category(self, *categories: str) -> "Found":
+        found = Matched()
+        for category in categories:
+            if (matched := self.matched.get("category:" + category)) is not None:
+                found.merge(matched)
+        return Found(self, found)
 
-    def samples(self) -> list[Sample]:
-        if self._samples is None:
-            self._samples = []
-            for index, test in enumerate(self.tests):
-                for phase, stacks in test["stacks"].items():
-                    total = test["samples"].get(phase) or 0
-                    if not total:
-                        continue
-                    for node, count in stacks:
-                        seconds = count / total * test["phases"][phase]
-                        category = self.categories.get(str(node), "library")
-                        self._samples.append(Sample(index, phase, seconds, self.path(node), category))
-        return self._samples
-
-    def frame_matches(self, frame_id: int, module: str, funcs: tuple[str, ...] | None = None) -> bool:
-        path, func = self.frames[frame_id][0].removeprefix("<stdlib>/"), self.frames[frame_id][1]
-        return path.startswith(module) and (funcs is None or func.rsplit(".", 1)[-1] in funcs)
-
-    def matching(self, predicate: Callable[[Sample], bool]) -> "Matched":
-        matched = Matched(self)
-        for sample in self.samples():
-            if predicate(sample):
-                matched.add(sample)
-        return matched
-
-    def in_category(self, *categories: str) -> "Matched":
-        return self.matching(lambda s: s.category in categories)
-
-    def through(self, module: str, funcs: tuple[str, ...] | None = None) -> "Matched":
-        return self.matching(lambda s: any(self.frame_matches(f, module, funcs) for f in s.frames))
-
-    def project_frame(self, frames: tuple[int, ...]) -> int | None:
-        for frame_id in reversed(frames):
-            if self.frames[frame_id][3] in ("test", "app"):
-                return frame_id
-        return None
+    def through(self, name: str) -> "Found":
+        """The samples a matcher from matchers.MATCHERS matched."""
+        return Found(self, self.matched.get(name) or Matched())
 
     def location(self, frame_id: int) -> dict[str, Any]:
         path, func, line, _ = self.frames[frame_id]
         return {"frame": frame_id, "location": f"{path}:{line}", "function": func}
 
     def source(self, frame_id: int) -> str:
-        return self.doc.get("sources", {}).get(str(frame_id), "")
+        text = self.doc.get("sources", {}).get(str(frame_id), "")
+        if not text and self.rootdir is not None:
+            path, _, line, kind = self.frames[frame_id]
+            if kind in ("test", "app"):
+                text = source_line(str(self.rootdir / path), line)
+        return text
 
 
-class Matched:
-    def __init__(self, profile: Profile) -> None:
+class Found:
+    def __init__(self, profile: Profile, matched: Matched) -> None:
         self.profile = profile
-        self.seconds = 0.0
-        self.by_test: defaultdict[int, float] = defaultdict(float)
-        self.by_location: defaultdict[int, float] = defaultdict(float)
-
-    def add(self, sample: Sample) -> None:
-        self.seconds += sample.seconds
-        self.by_test[sample.test] += sample.seconds
-        frame_id = self.profile.project_frame(sample.frames)
-        if frame_id is not None:
-            self.by_location[frame_id] += sample.seconds
+        self.matched = matched
+        self.seconds = matched.seconds
+        self.by_test = matched.by_test
+        self.by_category = matched.by_category
 
     def tests(self) -> list[str]:
-        return [self.profile.tests[i]["nodeid"] for i, _ in top(self.by_test, MAX_TESTS)]
+        return [nodeid for nodeid, _ in top(self.by_test, MAX_TESTS)]
 
     def locations(self) -> list[dict[str, Any]]:
         return [
             self.profile.location(frame_id) | {"seconds": round(seconds, 6)}
-            for frame_id, seconds in top(self.by_location, MAX_LOCATIONS)
+            for frame_id, seconds in top(self.matched.by_location, MAX_LOCATIONS)
         ]
 
 
@@ -156,7 +119,7 @@ def insight(
     fix: str,
     safety: str = "",
     docs: str = "",
-    matched: Matched | None = None,
+    matched: Found | None = None,
     tests: list[str] | None = None,
     evidence: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -281,7 +244,7 @@ def migrations(profile: Profile) -> Iterator[dict[str, Any]]:
 
 @rule
 def transactional_flush(profile: Profile) -> Iterator[dict[str, Any]]:
-    flush = profile.through("django/core/management/commands/flush.py")
+    flush = profile.through("flush")
     if worth_it(flush.seconds, profile, 0.5, 0.01):
         yield insight(
             profile,
@@ -299,7 +262,7 @@ def transactional_flush(profile: Profile) -> Iterator[dict[str, Any]]:
             docs="https://docs.djangoproject.com/en/stable/topics/testing/tools/#transactiontestcase",
             matched=flush,
         )
-    schema = profile.through("sqlalchemy/sql/schema.py", ("create_all", "drop_all"))
+    schema = profile.through("sqlalchemy_schema")
     if worth_it(schema.seconds, profile, 0.5, 0.01) and len(schema.by_test) > 1:
         yield insight(
             profile,
@@ -343,28 +306,20 @@ def fixture_loading(profile: Profile) -> Iterator[dict[str, Any]]:
 @rule
 def setup_per_test(profile: Profile) -> Iterator[dict[str, Any]]:
     """Django TestCase classes that build database rows in setUp for every test."""
-    classes: defaultdict[tuple[str, str], list[int]] = defaultdict(list)
-    for index, test in enumerate(profile.tests):
+    classes: defaultdict[tuple[str, str], list[str]] = defaultdict(list)
+    for test in profile.tests:
         if test.get("class"):
-            classes[(test["file"], test["class"])].append(index)
-    matched = profile.matching(
-        lambda s: any(
-            profile.frames[f][1].rsplit(".", 1)[-1] == "setUp" and profile.frames[f][3] == "test" for f in s.frames
-        )
-    )
+            classes[(test["file"], test["class"])].append(test["nodeid"])
+    matched = profile.through("setup_method")
     if not worth_it(matched.seconds, profile, 0.5, 0.02):
         return
-    by_category: defaultdict[str, float] = defaultdict(float)
-    for sample in profile.samples():
-        if matched.by_test.get(sample.test) and any(
-            profile.frames[f][1].rsplit(".", 1)[-1] == "setUp" and profile.frames[f][3] == "test" for f in sample.frames
-        ):
-            by_category[sample.category] += sample.seconds
-    mostly = ", ".join(f"{category.replace('_', ' ')} {fmt(seconds)}" for category, seconds in top(by_category, 3))
+    mostly = ", ".join(
+        f"{category.replace('_', ' ')} {fmt(seconds)}" for category, seconds in top(matched.by_category, 3)
+    )
     multi = [
         f"{cls} ({len(indexes)} tests)"
         for (file, cls), indexes in classes.items()
-        if len(indexes) > 1 and any(matched.by_test[i] for i in indexes)
+        if len(indexes) > 1 and any(matched.by_test.get(nodeid) for nodeid in indexes)
     ]
     if not multi:
         return
@@ -508,7 +463,7 @@ def subprocesses(profile: Profile) -> Iterator[dict[str, Any]]:
     matched = profile.in_category("subprocess")
     if not worth_it(matched.seconds, profile, 1.0, 0.02):
         return
-    containers = profile.through("testcontainers/").seconds + profile.through("docker/").seconds
+    containers = profile.through("containers").seconds
     fix = (
         "Call the Python code directly instead of spawning a process (click.testing.CliRunner, "
         "django.core.management.call_command, calling main(argv)), or mock subprocess.run for tests that only "
@@ -552,17 +507,12 @@ def browsers(profile: Profile) -> Iterator[dict[str, Any]]:
 @rule
 def factories(profile: Profile) -> Iterator[dict[str, Any]]:
     matched = profile.in_category("factories")
-    db_from_factories = profile.matching(
-        lambda s: (
-            s.category == "db"
-            and any(profile.frame_matches(f, "factory/") or profile.frame_matches(f, "model_bakery/") for f in s.frames)
-        )
-    )
+    db_from_factories = profile.through("factory_db")
     total = matched.seconds + db_from_factories.seconds
     if not worth_it(total, profile, 1.0, 0.03):
         return
-    faker = profile.through("faker/proxy.py", ("__init__",)).seconds + profile.through("faker/factory.py").seconds
-    hypothesis = profile.through("hypothesis/").seconds
+    faker = profile.through("faker_instances").seconds
+    hypothesis = profile.through("hypothesis").seconds
     fix = [
         "Create objects tests only read once: setUpTestData, or a module/session-scoped fixture.",
         (
@@ -597,7 +547,7 @@ def factories(profile: Profile) -> Iterator[dict[str, Any]]:
 
 @rule
 def mocking(profile: Profile) -> Iterator[dict[str, Any]]:
-    freezegun = profile.through("freezegun/")
+    freezegun = profile.through("freezegun")
     if worth_it(freezegun.seconds, profile, 0.5, 0.01):
         yield insight(
             profile,
@@ -612,17 +562,18 @@ def mocking(profile: Profile) -> Iterator[dict[str, Any]]:
             docs="https://github.com/adamchainz/time-machine#migrating-from-freezegun",
             matched=freezegun,
         )
-    autospec = profile.through("unittest/mock.py", ("create_autospec", "_check_sig", "_set_signature"))
+    autospec = profile.through("autospec")
     matched = profile.in_category("mocking")
-    if worth_it(matched.seconds - freezegun.seconds, profile, 1.0, 0.03):
+    mock_seconds = matched.seconds - freezegun.by_category.get("mocking", 0.0)
+    if worth_it(mock_seconds, profile, 1.0, 0.03):
         detail = f" ({fmt(autospec.seconds)} of it in autospec)" if autospec.seconds >= 0.2 else ""
         yield insight(
             profile,
             "mocking",
             "Mock setup is expensive",
             category="mocking",
-            impact=(matched.seconds - freezegun.seconds) * 0.5,
-            summary=f"unittest.mock takes {fmt(matched.seconds - freezegun.seconds)}{detail}.",
+            impact=mock_seconds * 0.5,
+            summary=f"unittest.mock takes {fmt(mock_seconds)}{detail}.",
             fix="Patch once per class or module (a class-level decorator, or a module-scoped fixture with "
             "monkeypatch.context) instead of in every test or loop iteration; autospec=True/create_autospec "
             "introspects signatures each time, so reuse the spec'd mock.",
@@ -632,7 +583,7 @@ def mocking(profile: Profile) -> Iterator[dict[str, Any]]:
 
 @rule
 def deepcopy(profile: Profile) -> Iterator[dict[str, Any]]:
-    test_data = profile.through("django/test/testcases.py", ("__get__",))
+    test_data = profile.through("testdata_copy")
     matched = profile.in_category("copying")
     if worth_it(test_data.seconds, profile, 0.3, 0.01):
         yield insight(
@@ -749,7 +700,7 @@ def serialization(profile: Profile) -> Iterator[dict[str, Any]]:
     matched = profile.in_category("serialization")
     if not worth_it(matched.seconds, profile, 2.0, 0.05):
         return
-    yaml = profile.through("yaml/").seconds
+    yaml = profile.through("yaml").seconds
     fix = "Parse fixture files once (functools.cache or a session-scoped fixture) instead of in every test."
     if yaml >= 0.5:
         fix += f" PyYAML takes {fmt(yaml)}: load with yaml.CSafeLoader (libyaml) instead of the pure-Python loader."
@@ -810,19 +761,8 @@ def n_plus_one(profile: Profile) -> Iterator[dict[str, Any]]:
 
 @rule
 def database_server(profile: Profile) -> Iterator[dict[str, Any]]:
-    matched = profile.in_category("db", "db_schema", "migrations")
     engines = " ".join(django(profile).get("databases", []))
-    connects = profile.matching(
-        lambda s: (
-            s.category == "db"
-            and any(
-                profile.frame_matches(f, "psycopg", ("connect",))
-                or profile.frame_matches(f, "sqlalchemy/pool/", ("__connect", "_create_connection", "connect"))
-                or profile.frame_matches(f, "django/db/backends/base/base.py", ("connect",))
-                for f in s.frames
-            )
-        )
-    )
+    connects = profile.through("db_connect")
     if worth_it(connects.seconds, profile, 0.5, 0.02):
         yield insight(
             profile,
@@ -836,22 +776,52 @@ def database_server(profile: Profile) -> Iterator[dict[str, Any]]:
             "(connection.close()/close_old_connections).",
             matched=connects,
         )
-    if ("postgresql" in engines or "mysql" in engines) and worth_it(matched.seconds, profile, 5.0, 0.2):
-        yield insight(
-            profile,
-            "db-server-durability",
-            "Make the test database server skip durability work",
-            category="db",
-            impact=matched.seconds * 0.2,
-            summary=f"Tests spend {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}) in the database. "
-            "Test databases don't need to survive a crash, so the server can skip flushing to disk.",
-            fix="For a PostgreSQL test server (Docker/CI service) start it with -c fsync=off -c synchronous_commit=off "
-            "-c full_page_writes=off, and put its data directory on tmpfs; for MySQL use "
-            "--innodb-flush-log-at-trx-commit=0 --skip-log-bin. Never on a server with data you need.",
-            safety="Only affects crash safety of the throwaway test server; query behaviour is identical.",
-            docs="https://www.postgresql.org/docs/current/non-durability.html",
-            matched=matched,
-        )
+    if not ("postgresql" in engines or "mysql" in engines):
+        return
+    # Durability costs only where the server flushes its log: at commits, and every write outside a transaction
+    # commits on its own. TestCase rolls back, so a TestCase-only suite has next to nothing to gain.
+    commits = commit_time = writes = write_time = 0.0
+    measured = False
+    committing: dict[str, float] = {}
+    for test in profile.tests:
+        db = test.get("db") or {}
+        if "commits" in db:
+            measured = True
+            if spent := db["commit_time"] + db.get("autocommit_write_time", 0.0):
+                committing[test["nodeid"]] = spent
+            commits += db["commits"]
+            commit_time += db["commit_time"]
+            writes += db.get("autocommit_writes", 0)
+            write_time += db.get("autocommit_write_time", 0.0)
+    flush = profile.through("flush")
+    if not measured:  # SQLAlchemy, or no query tracking: the sampled commits
+        sampled = profile.through("commit")
+        commit_time = sampled.seconds
+    impact = commit_time + write_time + flush.seconds
+    if not worth_it(impact, profile, 5.0, 0.02):
+        return
+    parts = []
+    if commit_time:
+        parts.append(f"{fmt(commit_time)} committing" + (f" ({commits:.0f} commits)" if measured else ""))
+    if write_time:
+        parts.append(f"{fmt(write_time)} in {writes:.0f} writes outside a transaction (each commits)")
+    if flush.seconds:
+        parts.append(f"{fmt(flush.seconds)} flushing tables after TransactionTestCase tests")
+    yield insight(
+        profile,
+        "db-server-durability",
+        "Make the test database server skip durability work",
+        category="db",
+        impact=impact,
+        summary=f"Tests spend {', '.join(parts)}: that's where the server waits for its log to reach the disk. "
+        "Test databases don't need to survive a crash. This is the most it can save: the round trips stay.",
+        fix="For a PostgreSQL test server (Docker/CI service) start it with -c fsync=off -c synchronous_commit=off "
+        "-c full_page_writes=off, and put its data directory on tmpfs; for MySQL use "
+        "--innodb-flush-log-at-trx-commit=0 --skip-log-bin. Never on a server with data you need.",
+        safety="Only affects crash safety of the throwaway test server; query behaviour is identical.",
+        docs="https://www.postgresql.org/docs/current/non-durability.html",
+        tests=[nodeid for nodeid, _ in top(committing, MAX_TESTS)] or flush.tests(),
+    )
 
 
 @rule
@@ -930,7 +900,7 @@ def django_settings(profile: Profile) -> Iterator[dict[str, Any]]:
     settings = django(profile)
     if not settings:
         return
-    toolbar = profile.through("debug_toolbar/")
+    toolbar = profile.through("debug_toolbar")
     if settings.get("debug_toolbar") and toolbar.seconds >= 0.2:
         yield insight(
             profile,
@@ -944,36 +914,39 @@ def django_settings(profile: Profile) -> Iterator[dict[str, Any]]:
             docs="https://django-debug-toolbar.readthedocs.io/en/latest/installation.html#disable-the-toolbar-when-running-tests-optional",
             matched=toolbar,
         )
-    debug_cursor = profile.matching(
-        lambda s: any(profile.frames[f][1].startswith("CursorDebugWrapper") for f in s.frames)
-    )
-    if settings.get("debug") and debug_cursor.seconds >= 0.3:
+    # DEBUG's own cost is the bookkeeping around each query, not the query. With DEBUG off, only
+    # assertNumQueries / CaptureQueriesContext use the debug cursor, and they need it.
+    debug_sql = profile.through("debug_sql")
+    if settings.get("debug") and worth_it(debug_sql.seconds, profile, 0.5, 0.01):
         yield insight(
             profile,
             "django-debug-in-tests",
             "Tests run with DEBUG = True",
             category="db",
-            impact=debug_cursor.seconds * 0.2,
-            summary="DEBUG is on, so Django records every SQL query (CursorDebugWrapper) and keeps extra debug state.",
+            impact=debug_sql.seconds,
+            summary=f"DEBUG is on while tests run, so Django times and records every SQL query in "
+            f"connection.queries: {fmt(debug_sql.seconds)} of bookkeeping.",
             fix="Don't force DEBUG = True in tests (Django's test runner sets it to False unless you pass "
             "--debug-mode, pytest-django unless you set django_debug_mode).",
             safety="Tests that rely on DEBUG behaviour (e.g. error pages) can override it with override_settings.",
+            matched=debug_sql,
         )
-    static = profile.through("django/contrib/staticfiles/storage.py")
-    whitenoise = profile.through("whitenoise/")
-    if static.seconds + whitenoise.seconds >= 0.5:
+    static = profile.through("static_files")
+    if worth_it(static.seconds, profile, 0.5, 0.01):
         yield insight(
             profile,
             "django-static-storage",
             "Use plain static file storage in tests",
             category="app_code",
-            impact=static.seconds + whitenoise.seconds,
-            summary=f"Static file storage/manifest handling costs {fmt(static.seconds + whitenoise.seconds)}.",
+            impact=static.seconds,
+            summary=f"Static file storage, finders and WhiteNoise take {fmt(static.seconds)} of their own work "
+            "(hashing names, reading the manifest, looking up files).",
             fix='In test settings use STORAGES["staticfiles"] = {"BACKEND": '
-            '"django.contrib.staticfiles.storage.StaticFilesStorage"} so templates don\'t need a manifest.',
-            matched=static if static.seconds >= whitenoise.seconds else whitenoise,
+            '"django.contrib.staticfiles.storage.StaticFilesStorage"} so templates don\'t need a manifest, and '
+            "WHITENOISE_AUTOREFRESH = False.",
+            matched=static,
         )
-    celery = profile.through("celery/")
+    celery = profile.through("celery")
     if celery.seconds >= 0.5 and not settings.get("celery_eager"):
         yield insight(
             profile,
@@ -992,8 +965,7 @@ def django_settings(profile: Profile) -> Iterator[dict[str, Any]]:
 
 @rule
 def async_loops(profile: Profile) -> Iterator[dict[str, Any]]:
-    loops = profile.through("asyncio/base_events.py", ("__init__", "close", "shutdown_default_executor"))
-    loops.seconds += profile.through("asyncio/events.py", ("new_event_loop",)).seconds
+    loops = profile.through("event_loops")
     if not worth_it(loops.seconds, profile, 0.5, 0.02):
         return
     yield insight(
@@ -1015,9 +987,9 @@ def async_loops(profile: Profile) -> Iterator[dict[str, Any]]:
 def slowest_tests(profile: Profile) -> Iterator[dict[str, Any]]:
     if not profile.test_time:
         return
-    for test in sorted(profile.tests, key=lambda t: -t["duration"])[:3]:
-        own_time = test["duration"] - test.get("shared_fixture_time", 0)
-        if own_time < 2 or own_time < profile.test_time * 0.1:
+    for test in sorted(profile.tests, key=own_time, reverse=True)[:3]:
+        own = own_time(test)
+        if own < 2 or own < profile.test_time * 0.1:
             continue
         top = max(test["categories"].items(), key=lambda kv: kv[1], default=("unknown", 0))
         segment = test["segments"][0]["label"] if test["segments"] else "unknown"
@@ -1036,8 +1008,15 @@ def slowest_tests(profile: Profile) -> Iterator[dict[str, Any]]:
         )
 
 
-def generate(doc: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
-    profile = Profile(doc, context)
+def own_time(test: dict[str, Any]) -> float:
+    """A test's duration without what other tests share (class/module/session fixtures) and one-off warm-up."""
+    return test["duration"] - test.get("shared_fixture_time", 0) - (test.get("warmup") or {}).get("seconds", 0)
+
+
+def generate(
+    doc: dict[str, Any], context: dict[str, Any], matched: dict[str, Matched] | None = None, rootdir: Path | None = None
+) -> list[dict[str, Any]]:
+    profile = Profile(doc, context, matched, rootdir)
     found: list[dict[str, Any]] = []
     seen: set[str] = set()
     for check in RULES:

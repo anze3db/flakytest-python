@@ -46,4 +46,8 @@ jobs:
           PYTEST: ${{ matrix.pytest }}
           # The plugin reports this run to flakytest.dev, which mutes tests/test_flake.py's failures
           FLAKYTEST_SECRET_TOKEN: ${{ secrets.FLAKYTEST_SECRET_TOKEN }}
-        run: uv run --python "$PY" --with "pytest~=$PYTEST.0" pytest -q
+        # pytest-xdist and Django run the synthetic suites in tests/test_accuracy.py (both need pytest 7+)
+        run: |
+          extra=()
+          if [ "$PYTEST" != 6 ]; then extra=(--with pytest-xdist --with django); fi
+          uv run --python "$PY" --with "pytest~=$PYTEST.0" "${extra[@]}" pytest -q

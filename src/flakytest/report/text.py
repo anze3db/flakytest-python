@@ -5,6 +5,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from flakytest.profiling.insights import own_time
 from flakytest.profiling.memory import mb
 from flakytest.report.tree import build_tree, fmt, hot_functions, render_tree
 
@@ -64,7 +65,30 @@ def why(test: dict[str, Any]) -> str:
     db = test.get("db") or {}
     if db.get("queries"):
         parts.append(f"{db['queries']} queries")
+    if threads := test.get("threads"):
+        work = ", ".join(f"{label(k)} {pct(v, threads['seconds'])}" for k, v in list(threads["categories"].items())[:2])
+        parts.append(f"{fmt(threads['seconds'])} in {plural(threads['count'], 'background thread')}: {work}")
+    if one_off := one_off_note(test):
+        parts.append(one_off)
     return ", ".join(parts)
+
+
+def plural(count: int, word: str) -> str:
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def one_off_note(test: dict[str, Any]) -> str:
+    """ "+4.6s one-off: first mock_aws_services call in gw2", for a test that paid for warming something up."""
+    warmup = test.get("warmup")
+    if not warmup or warmup["seconds"] < 0.05:
+        return ""
+    return f"+{fmt(warmup['seconds'])} one-off: " + ", ".join(cause["what"] for cause in warmup["causes"])
+
+
+def slowest(tests: list[dict[str, Any]], top: int) -> list[dict[str, Any]]:
+    """The slowest tests by their own time: without shared fixtures and one-off warm-up, which any test that
+    happens to run first would pay."""
+    return sorted(tests, key=own_time, reverse=True)[:top]
 
 
 def headline(profile: dict[str, Any]) -> str:
@@ -98,10 +122,28 @@ def versus(old: dict[str, Any], new: dict[str, Any]) -> str:
     return ", ".join(parts) + " · flakytest compare"
 
 
+def warms_up(test: dict[str, Any]) -> bool:
+    """A test whose memory includes warming up: the first in its process or class, or one that set up a fixture
+    other tests share (whose memory is the fixture's)."""
+    return bool((test.get("memory") or {}).get("warmup")) or any(f["scope"] != "function" for f in test["fixtures"])
+
+
 def memory_hogs(profile: dict[str, Any], top: int) -> list[dict[str, Any]]:
-    """The tests that needed the most memory: their peak above the memory the process had when they started."""
-    measured = [t for t in profile["tests"] if (t.get("memory") or {}).get("peak_increase")]
+    """The tests that needed the most memory: their peak above the memory the process had when they started. Tests
+    that warmed something up are left out: what they needed says more about the order tests ran in."""
+    measured = [t for t in profile["tests"] if (t.get("memory") or {}).get("peak_increase") and not warms_up(t)]
     return sorted(measured, key=lambda t: -t["memory"]["peak_increase"])[:top]
+
+
+def fixture_memory(profile: dict[str, Any], top: int) -> list[tuple[str, str, int]]:
+    """Class/module/session fixtures by the private memory they kept."""
+    kept: dict[tuple[str, str], int] = {}
+    for test in profile["tests"]:
+        for fixture in test["fixtures"]:
+            if fixture.get("memory"):
+                key = (fixture["name"], fixture["scope"])
+                kept[key] = kept.get(key, 0) + fixture["memory"]
+    return [(name, scope, size) for (name, scope), size in sorted(kept.items(), key=lambda kv: -kv[1])[:top]]
 
 
 def memory_line(profile: dict[str, Any]) -> str | None:
@@ -142,6 +184,14 @@ def memory_markdown(profile: dict[str, Any], top: int) -> list[str]:
             used = test["memory"]
             kept = mb(used["growth"]) if used.get("growth") is not None else "?"
             out.append(f"| `{test['nodeid']}` | {mb(used['peak_increase'])} | {kept} | {test.get('worker') or ''} |")
+        out.append(
+            "\nLeft out: the first test in each process and class, and tests that set up a class, module or session "
+            "fixture, since they pay for warming up."
+        )
+    shared = [entry for entry in fixture_memory(profile, top) if entry[2] >= 1024**2]
+    if shared:
+        out += ["", "| Shared fixture | Scope | Kept |", "|---|---|---:|"]
+        out += [f"| `{name}` | {scope} | {mb(size)} |" for name, scope, size in shared]
     if workers > 1:
         out += ["", "| Worker | Tests | Peak | Grew by |", "|---|---:|---:|---:|"]
         for process in memory["processes"]:
@@ -162,10 +212,10 @@ def terminal_summary(
     categories = [(k, v) for k, v in summary["categories"].items() if v / (total or 1) >= 0.02][:6]
     if categories:
         lines.append("Time goes to: " + " · ".join(f"{label(k)} {pct(v, total)}" for k, v in categories))
-    slowest = sorted(profile["tests"], key=lambda t: -t["duration"])[:5]
-    if slowest:
+    slow = slowest(profile["tests"], 5)
+    if slow:
         lines.append("Slowest tests:")
-        lines.extend(f"  {fmt(t['duration']):>7}  {t['nodeid']}  ({why(t)})" for t in slowest)
+        lines.extend(f"  {fmt(t['duration']):>7}  {t['nodeid']}  ({why(t)})" for t in slow)
     if profile["insights"]:
         lines.append("Fix next:")
         for number, item in enumerate(profile["insights"][:3], 1):
@@ -236,12 +286,14 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
         "| Test | Time | Setup / call / teardown | Why |",
         "|---|---:|---|---|",
     ]
-    for test in sorted(profile["tests"], key=lambda t: -t["duration"])[:top]:
+    for test in slowest(profile["tests"], top):
         p = test["phases"]
         out.append(
             f"| `{test['nodeid']}` | {fmt(test['duration'])} | {fmt(p['setup'])} / {fmt(p['call'])} / "
             f"{fmt(p['teardown'])} | {why(test)} |"
         )
+
+    out += one_off_markdown(profile, top)
 
     files: Counter[str] = Counter()
     for test in profile["tests"]:
@@ -276,6 +328,32 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
         ),
     ]
     return "\n".join(out) + "\n"
+
+
+def one_off_markdown(profile: dict[str, Any], top: int) -> list[str]:
+    paying = sorted(
+        (t for t in profile["tests"] if (t.get("warmup") or {}).get("seconds", 0) >= 0.05),
+        key=lambda t: -t["warmup"]["seconds"],
+    )
+    if not paying:
+        return []
+    total = sum(t["warmup"]["seconds"] for t in paying)
+    out = [
+        "",
+        "## One-off costs",
+        "",
+        (
+            f"{fmt(total)} in {plural(len(paying), 'test')} goes to warming up: the first call of a fixture in a "
+            "process, and imports. Whichever test runs first pays it, so it's left out of the slowest tests above."
+        ),
+        "",
+        "| Test | One-off | What |",
+        "|---|---:|---|",
+    ]
+    for test in paying[:top]:
+        what = ", ".join(f"{cause['what']} ({fmt(cause['seconds'])})" for cause in test["warmup"]["causes"])
+        out.append(f"| `{test['nodeid']}` | {fmt(test['warmup']['seconds'])} | {what} |")
+    return out
 
 
 def insight_markdown(profile: dict[str, Any], item: dict[str, Any], number: int) -> list[str]:
@@ -346,8 +424,19 @@ def test_report(profile: dict[str, Any], query: str, *, min_share: float = 0.02)
         used = test.get("memory") or {}
         if used.get("peak_increase") is not None:
             kept = f", kept {mb(used['growth'])} after it" if used.get("growth") is not None else ""
+            start = used.get("private_start", used.get("start")) or 0
+            what = " of private memory" if "private_start" in used else ""
+            note = f" ({used['warmup']}, so it may include warming up)" if used.get("warmup") else ""
             out.append(
-                f"Memory: needed {mb(used['peak_increase'])} above the {mb(used['start'])} it started with{kept}."
+                f"Memory: needed {mb(used['peak_increase'])} above the {mb(start)}{what} it started with{kept}{note}."
+            )
+        if one_off := one_off_note(test):
+            out.append(f"One-off: {one_off.split(': ', 1)[1]} ({fmt(test['warmup']['seconds'])}).")
+        if threads := test.get("threads"):
+            work = ", ".join(f"{label(k)} {fmt(v)}" for k, v in threads["categories"].items())
+            out.append(
+                f"While it waited, {plural(threads['count'], 'background thread')} worked {fmt(threads['seconds'])}: "
+                f"{work}. That time is counted as their work, not as waiting."
             )
         if "undersampled" in test["warnings"] or "low_samples" in test["warnings"]:
             rate = profile["run"]["profiler"]["rate"]

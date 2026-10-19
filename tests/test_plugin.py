@@ -61,7 +61,12 @@ def test_profile_without_sampler(pytester):
     assert profile["run"]["profiler"]["backend"] == "none"
     assert profile["run"]["exit_status"] == "TESTS_FAILED"
     # samples are cleaned up, only the report and profile remain
-    assert sorted(p.name for p in run.iterdir() if not p.name.startswith("sampler")) == ["index.html", "profile.json"]
+    assert sorted(p.name for p in run.iterdir() if not p.name.startswith("sampler")) == [
+        "index.html",
+        "profile.js",
+        "profile.json",
+        "summary.json",
+    ]
 
 
 def test_not_profiling_by_default(pytester):

@@ -1,3 +1,4 @@
+import os
 import sys
 
 import pytest
@@ -7,7 +8,7 @@ from flakytest.profiling.memory import MB, MemoryMeter, growth_warning, summariz
 from flakytest.report.text import markdown_report, memory_line
 from tests.test_plugin import latest_profile
 
-LINUX = sys.platform.startswith("linux") and memory.STATUS.exists()
+LINUX = sys.platform.startswith("linux") and os.path.exists(memory.STATUS)
 
 
 def measured(nodeid, worker, at, *, start, peak, end, duration=1.0, shared=10 * MB):
@@ -103,6 +104,9 @@ def test_meter_without_a_resettable_peak(monkeypatch):
 SUITE = """
 LEAK = []
 
+def test_first():
+    pass
+
 def test_big():
     data = bytearray(64 * 1024 * 1024)
     data[::4096] = b"x" * len(data[::4096])
@@ -116,7 +120,7 @@ def test_small():
 def test_profile_records_memory(pytester):
     pytester.makepyfile(test_suite=SUITE)
     result = pytester.runpytest("--flakytest-profile", "--flakytest-backend", "none")
-    result.assert_outcomes(passed=2)
+    result.assert_outcomes(passed=3)
     result.stdout.fnmatch_lines(["Memory: peak * · most: test_suite.py::test_big needed * MB"])
     _, profile = latest_profile(pytester)
     tests = {t["nodeid"]: t for t in profile["tests"]}

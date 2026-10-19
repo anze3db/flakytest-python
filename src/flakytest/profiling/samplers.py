@@ -4,9 +4,11 @@ import contextlib
 import ctypes
 import importlib.util
 import json
+import mmap
 import os
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import time
@@ -17,6 +19,8 @@ START_TIMEOUT = 15.0
 STOP_TIMEOUT = 120.0
 BACKENDS = ("auto", "tachyon", "py-spy", "none")
 DEFAULT_RATES = {"tachyon": 1000, "py-spy": 500}
+# The control file tachyon_sampler reads: test sequence number, sampling interval in microseconds
+CONTROL = struct.Struct("<QI")
 
 
 def tachyon_available() -> bool:
@@ -67,7 +71,11 @@ class Sampler:
         self.backend = backend
         self.rate = rate
         self.pid = os.getpid()
-        self.out = out_dir / f"samples-{self.pid}.{'json' if backend == 'tachyon' else 'txt'}"
+        self.out = out_dir / f"samples-{self.pid}.{'jsonl' if backend == 'tachyon' else 'txt'}"
+        self.control_path = out_dir / f"control-{self.pid}"
+        self.control: mmap.mmap | None = None
+        self.test_sequence = 0
+        self.sampling_rate = rate
         self.log = out_dir / f"sampler-{self.pid}.log"
         self.process: subprocess.Popen[bytes] | None = None
         self.error: str | None = None
@@ -77,6 +85,7 @@ class Sampler:
     def start(self) -> bool:
         ready = self.out.with_suffix(".ready")
         if self.backend == "tachyon":
+            self._open_control()
             command = [
                 sys.executable,
                 "-m",
@@ -89,6 +98,8 @@ class Sampler:
                 str(self.out),
                 "--ready",
                 str(ready),
+                "--control",
+                str(self.control_path),
             ]
         else:
             command = [
@@ -137,6 +148,24 @@ class Sampler:
             return False
         self.started_at = time.perf_counter()
         return True
+
+    def _open_control(self) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            self.control_path.write_bytes(bytes(CONTROL.size))
+            with self.control_path.open("r+b") as f:
+                self.control = mmap.mmap(f.fileno(), CONTROL.size)
+
+    def next_test(self) -> None:
+        """Tell the sampler a new test started (tachyon samples a long test less often after a while)."""
+        if self.control is not None:
+            self.test_sequence += 1
+            struct.pack_into("<Q", self.control, 0, self.test_sequence)
+
+    def set_rate(self, rate: int) -> None:
+        """Sample less often from now on (tachyon only; never faster than the rate it started with)."""
+        if self.control is not None and 0 < rate < self.rate:
+            self.sampling_rate = rate
+            struct.pack_into("<I", self.control, 8, 1_000_000 // rate)
 
     def stop(self) -> Path | None:
         if self.process is None:

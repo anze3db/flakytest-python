@@ -1,20 +1,23 @@
-"""The local report: one self-contained HTML file with the profile embedded."""
+"""The local report: index.html, which loads the profile from profile.js next to it.
 
-import json
+A <script src> works when the report is opened straight from disk (file://), unlike fetching profile.json, and
+the browser parses the data as it loads instead of a second copy of it embedded in the page.
+"""
+
 from importlib import resources
 from pathlib import Path
-from typing import Any
 
-PLACEHOLDER = "/*__FLAKYTEST_PROFILE__*/null"
+DATA_FILE = "profile.js"
+DATA_PREFIX = "window.FLAKYTEST_PROFILE = "
 
 
-def render(profile: dict[str, Any]) -> str:
+def write_report(profile_json: str, run_dir: Path) -> Path:
+    """profile_json: the profile document, serialised once for profile.json and reused here."""
     template = resources.files("flakytest.report").joinpath("template.html").read_text(encoding="utf-8")
-    data = json.dumps(profile, separators=(",", ":")).replace("</", "<\\/").replace("<!--", "<\\!--")
-    return template.replace(PLACEHOLDER, data)
-
-
-def write_report(profile: dict[str, Any], run_dir: Path) -> Path:
+    with (run_dir / DATA_FILE).open("w", encoding="utf-8") as f:
+        f.write(DATA_PREFIX)
+        f.write(profile_json)
+        f.write(";\n")
     path = run_dir / "index.html"
-    path.write_text(render(profile), encoding="utf-8")
+    path.write_text(template, encoding="utf-8")
     return path

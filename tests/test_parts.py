@@ -1,14 +1,18 @@
 import json
+import sysconfig
+from pathlib import Path
 
 import pytest
 
 from flakytest import cloud
+from flakytest.profiling import analysis
 from flakytest.profiling.analysis import build_profile
 from flakytest.profiling.parts import SESSION_KEYS, size, split_profile
 from flakytest.report.tree import build_tree, render_tree
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
 SITE = "/venv/lib/python3.15/site-packages"
+THREADING = str(Path(sysconfig.get_paths()["stdlib"]) / "threading.py")
 
 
 @pytest.fixture
@@ -98,3 +102,46 @@ def test_upload_reports_missing_parts(profile, monkeypatch):
     monkeypatch.setattr(cloud, "make_request", lambda *args, **kwargs: next(responses))
     monkeypatch.setattr(cloud, "split_profile", lambda p: split_profile(p, max_tests=4))
     assert cloud.upload_profile(profile) is None
+
+
+def path_of(document, node):
+    frames = []
+    while node >= 0:
+        node, frame = document["stacks"][node]
+        frames.append(tuple(document["frames"][frame]))
+    return frames
+
+
+def test_parts_remap_background_threads_and_the_folded_tests(tmp_path, monkeypatch):
+    monkeypatch.setattr(analysis, "KEEP_STACKS", 1)
+    monkeypatch.setattr(analysis, "KEEP_STACKS_SECONDS", 100)
+    test_file = str(tmp_path / "tests/test_suite.py")
+    nodeids = [f"tests/test_suite.py::test_{i}" for i in range(4)]
+    wait = (str(tmp_path / "tests/test_suite.py"), "wait", 3)
+    join = (THREADING, "Thread.join", 1100)
+    stacks, threads = [], []
+    for i, nodeid in enumerate(nodeids):
+        main = phase_stack(nodeid, "call", (test_file, f"test_{i}", 10 + i), wait, join)
+        stacks.append((main, 10))
+        marker = main[len(phase_stack(nodeid, "call")) - 2]
+        pool = (
+            (THREADING, "Thread.run", 1000),
+            (str(tmp_path / "app/scan.py"), "scan", 5 + i),
+        )
+        threads.append((marker, 7, pool, 10))
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", stacks, threads)
+    tests = [record(nodeid, call=0.5 + i) for i, nodeid in enumerate(nodeids)]
+    profile = build_profile(run_info(), [process(tests, samples, sampled_seconds=3.0)], tmp_path, {})
+    assert profile["suite_stacks"]
+    kept = [t for t in profile["tests"] if t.get("thread_stacks")]
+    assert len(kept) == 1
+    first, *rest = split_profile(profile, max_tests=1)
+    folded = {tuple(path_of(profile, node)) for node, _, _ in profile["suite_stacks"]}
+    assert {tuple(path_of(first, node)) for node, _, _ in first["suite_stacks"]} == folded
+    for part in [first, *rest]:
+        for test in part["tests"]:
+            original = next(t for t in profile["tests"] if t["nodeid"] == test["nodeid"])
+            for phase, pairs in test.get("thread_stacks", {}).items():
+                assert [path_of(part, n) for n, _ in pairs] == [
+                    path_of(profile, n) for n, _ in original["thread_stacks"][phase]
+                ]

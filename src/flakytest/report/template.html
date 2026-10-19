@@ -230,10 +230,10 @@ pre.failure { background: var(--surface-2); padding: 12px; border-radius: 6px; o
 </div>
 <div id="tooltip"></div>
 <div class="toast" id="toast"></div>
-<script id="profile-data" type="application/json">/*__FLAKYTEST_PROFILE__*/null</script>
+<script src="profile.js"></script>
 <script>
 "use strict";
-const P = JSON.parse(document.getElementById("profile-data").textContent);
+const P = window.FLAKYTEST_PROFILE;
 
 const FAMILIES = {
   db: ["db", "migrations", "db_schema", "fixture_loading"],
@@ -460,46 +460,53 @@ function aggregate(list) {
   };
 }
 
-function buildCallTree(list, hideFramework) {
-  const root = { frame: null, seconds: 0, self: 0, cats: {}, children: new Map() };
+// [node, seconds, category] for every stack of the tests: their own, the background threads that stood in for
+// their waiting, and (for the whole suite) the tree the fast tests were folded into
+function* weightedStacks(list, suite) {
   for (const t of list) {
     for (const [phase, stacks] of Object.entries(t.stacks)) {
       const total = t.samples[phase];
       if (!total) continue;
+      const threads = t.thread_stacks && t.thread_stacks[phase];
       for (const [node, count] of stacks) {
-        const secs = (count / total) * t.phases[phase];
         const cat = stackCats[node] || "library";
-        const path = hideFramework ? visiblePath(node) : stackPath(node);
-        root.seconds += secs;
-        root.cats[cat] = (root.cats[cat] || 0) + secs;
-        let n = root;
-        for (const f of path) {
-          let c = n.children.get(f);
-          if (!c) { c = { frame: f, seconds: 0, self: 0, cats: {}, children: new Map() }; n.children.set(f, c); }
-          c.seconds += secs;
-          c.cats[cat] = (c.cats[cat] || 0) + secs;
-          n = c;
-        }
-        n.self += secs;
+        if (threads && cat === "waiting") continue;
+        yield [node, (count / total) * t.phases[phase], cat];
       }
+      for (const [node, secs] of threads || []) yield [node, secs, stackCats[node] || "library"];
     }
+  }
+  if (suite) for (const [node, cat, secs] of P.suite_stacks || []) yield [node, secs, cat];
+}
+
+function buildCallTree(list, hideFramework, suite) {
+  const root = { frame: null, seconds: 0, self: 0, cats: {}, children: new Map() };
+  for (const [node, secs, cat] of weightedStacks(list, suite)) {
+    const path = hideFramework ? visiblePath(node) : stackPath(node);
+    root.seconds += secs;
+    root.cats[cat] = (root.cats[cat] || 0) + secs;
+    let n = root;
+    for (const f of path) {
+      let c = n.children.get(f);
+      if (!c) { c = { frame: f, seconds: 0, self: 0, cats: {}, children: new Map() }; n.children.set(f, c); }
+      c.seconds += secs;
+      c.cats[cat] = (c.cats[cat] || 0) + secs;
+      n = c;
+    }
+    n.self += secs;
   }
   return root;
 }
 const dominant = cats => Object.entries(cats).sort((a, b) => b[1] - a[1])[0]?.[0] || "library";
 
-function hotFunctions(list, hideFramework) {
+function hotFunctions(list, hideFramework, suite) {
   const self = new Map(), total = new Map();
-  for (const t of list) for (const [phase, stacks] of Object.entries(t.stacks)) {
-    const n = t.samples[phase]; if (!n) continue;
-    for (const [node, count] of stacks) {
-      const secs = (count / n) * t.phases[phase];
-      const path = hideFramework ? visiblePath(node) : stackPath(node);
-      const leaf = frames[path[path.length - 1]];
-      const key = leaf[0] + "\u0000" + leaf[1];
-      self.set(key, (self.get(key) || 0) + secs);
-      for (const k of new Set(path.map(f => frames[f][0] + "\u0000" + frames[f][1]))) total.set(k, (total.get(k) || 0) + secs);
-    }
+  for (const [node, secs] of weightedStacks(list, suite)) {
+    const path = hideFramework ? visiblePath(node) : stackPath(node);
+    const leaf = frames[path[path.length - 1]];
+    const key = leaf[0] + "\u0000" + leaf[1];
+    self.set(key, (self.get(key) || 0) + secs);
+    for (const k of new Set(path.map(f => frames[f][0] + "\u0000" + frames[f][1]))) total.set(k, (total.get(k) || 0) + secs);
   }
   return [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([k, s]) => { const [path, fn] = k.split("\u0000"); return { path, fn, self: s, total: total.get(k) }; });
 }
@@ -546,11 +553,15 @@ function whyText(t) {
   if (t.segments.length) parts.push(`${t.segments[0].label} in ${t.segments[0].phase}`);
   if ((t.shared_fixture_time || 0) >= 0.05) parts.push(`incl. ${fmt(t.shared_fixture_time)} in shared fixtures`);
   if (t.db && t.db.queries) parts.push(`${t.db.queries} queries`);
+  if (t.threads) parts.push(`${fmt(t.threads.seconds)} in ${plural(t.threads.count, "background thread")}: ${Object.entries(t.threads.categories).slice(0, 2).map(([c, v]) => `${catLabel(c)} ${pct(v, t.threads.seconds)}`).join(", ")}`);
+  if (t.warmup && t.warmup.seconds >= 0.05) parts.push(`+${fmt(t.warmup.seconds)} one-off: ${t.warmup.causes.map(c => c.what).join(", ")}`);
   return parts.join(" · ");
 }
+// Without what other tests share (class/module/session fixtures) and one-off warm-up
+const ownTime = t => t.duration - (t.shared_fixture_time || 0) - (t.warmup ? t.warmup.seconds : 0);
 
 function testsTable(list, limit) {
-  const rows = [...list].sort((a, b) => b.duration - a.duration).slice(0, limit);
+  const rows = [...list].sort((a, b) => ownTime(b) - ownTime(a)).slice(0, limit);
   return `<table><thead><tr><th>Test</th><th class="num">Time</th><th>Breakdown</th><th>Why</th></tr></thead><tbody>` +
     rows.map(t => `<tr class="link" data-goto="${esc(t.nodeid)}"><td><span class="dot o-${t.outcome}"></span>${esc(t.class ? t.class + "::" + t.name : t.name)}<div class="why mono" style="font-size:11.5px">${esc(t.file)}</div></td>
       <td class="num">${fmt(t.duration)}</td><td style="min-width:120px">${stackBar(t.categories, t.duration, true)}</td><td class="why">${esc(whyText(t))}</td></tr>`).join("") + `</tbody></table>`;
@@ -591,10 +602,10 @@ function callTreeSection(list) {
     <div class="card calltree" id="calltree"></div>`;
 }
 
-function renderCallTree(list) {
+function renderCallTree(list, suite) {
   const el = document.getElementById("calltree");
   if (!el) return;
-  const root = buildCallTree(list, state.hideFramework);
+  const root = buildCallTree(list, state.hideFramework, suite);
   if (!root.seconds) { el.innerHTML = `<p class="empty">No samples for this selection${P.run.profiler.backend === "none" ? " (no profiler ran)" : ""}.</p>`; return; }
   const total = root.seconds;
   const open = new Set();
@@ -634,8 +645,8 @@ function renderCallTree(list) {
   redraw();
 }
 
-function hotFunctionsHtml(list) {
-  const fns = hotFunctions(list, state.hideFramework);
+function hotFunctionsHtml(list, suite) {
+  const fns = hotFunctions(list, state.hideFramework, suite);
   if (!fns.length) return "";
   return `<h2>Hot functions</h2><div class="card"><table><thead><tr><th>Function</th><th class="num">Self</th><th class="num">Total</th></tr></thead><tbody>` +
     fns.map(f => `<tr><td><code>${esc(f.fn)}</code> <span class="why mono" style="font-size:11.5px">${esc(f.path)}</span></td><td class="num">${fmt(f.self)}</td><td class="num">${fmt(f.total)}</td></tr>`).join("") +
@@ -723,7 +734,7 @@ function renderOverview() {
     ${fixturesHtml((P.fixtures || []).map(f => ({ ...f })), "Slowest fixtures")}
     ${dbHtml(agg)}
     ${callTreeSection(tests)}
-    ${hotFunctionsHtml(tests)}`;
+    ${hotFunctionsHtml(tests, true)}`;
 }
 
 function renderGroup(g) {
@@ -793,7 +804,7 @@ function renderDetail() {
   const el = document.getElementById("detail");
   const g = groupIndex.get(state.selected) || ROOT;
   el.innerHTML = g.type === "root" ? renderOverview() : g.type === "test" ? renderTest(g.test) : renderGroup(g);
-  renderCallTree(g.tests);
+  renderCallTree(g.tests, g.type === "root");
   const fw = document.getElementById("hide-fw");
   if (fw) fw.addEventListener("change", () => { state.hideFramework = fw.checked; renderDetail(); });
   el.parentElement.scrollTop = 0;

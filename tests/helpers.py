@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from flakytest.profiling.fixtures import FixtureStats
 from flakytest.profiling.markers import MARKER_FILENAME, marker_key, marker_name
 
 FROM_CALL = ("/venv/lib/python3.15/site-packages/_pytest/runner.py", "CallInfo.from_call", 341)
@@ -37,15 +38,42 @@ def phase_stack(nodeid, phase, *frames):
     return (*ROOT_FRAMES, marker, FROM_CALL, *frames)
 
 
-def write_tachyon_samples(path: Path, stacks, thread="1"):
-    """stacks: [(frames from the root, count)]."""
+def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True):
+    """A tachyon_sampler file. stacks: the main thread's [(frames from the root, count)]; threads: other threads'
+    [(main thread's marker frame, thread id, frames from the root, count)]."""
+    path = path.with_suffix(".jsonl")
     frame_ids: dict = {}
-    out = []
-    for frames, count in stacks:
-        ids = [frame_ids.setdefault(tuple(f), len(frame_ids)) for f in frames]
-        out.append([thread, ids, count])
-    path.write_text(json.dumps({"backend": "tachyon", "frames": [list(f) for f in frame_ids], "stacks": out}))
+    node_ids: dict = {}
+    nodes: list = []
+
+    def leaf(frames):
+        node = -1
+        for frame in frames:
+            key = (node, frame_ids.setdefault(tuple(frame), len(frame_ids)))
+            if key not in node_ids:
+                node_ids[key] = len(nodes)
+                nodes.append(list(key))
+            node = node_ids[key]
+        return node
+
+    main = [[leaf(frames), count] for frames, count in stacks]
+    other = [
+        [frame_ids.setdefault(tuple(m), len(frame_ids)), tid, leaf(frames), count] for m, tid, frames, count in threads
+    ]
+    line = {"frames": [list(f) for f in frame_ids], "nodes": nodes, "main": main, "threads": other, "failed": 0}
+    if done:
+        line["done"] = True
+    path.write_text(json.dumps(line) + "\n")
     return path
+
+
+def fixture_stats(tests):
+    """What the plugin adds up while tests run, from the fixtures in the records."""
+    stats = FixtureStats()
+    for test in tests:
+        for fixture in test["fixtures"]:
+            stats.add(fixture["name"], fixture["scope"], fixture["duration"], test["nodeid"])
+    return stats.as_list()
 
 
 def process(tests, samples_file=None, sampled_seconds=0.0, **extra):
@@ -59,6 +87,7 @@ def process(tests, samples_file=None, sampled_seconds=0.0, **extra):
         "sampled_seconds": sampled_seconds,
         "tests": tests,
         "fixture_users": {},
+        "fixture_stats": fixture_stats(tests),
         "context": {},
         **extra,
     }

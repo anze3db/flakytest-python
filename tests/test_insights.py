@@ -1,7 +1,13 @@
+import sysconfig
+from pathlib import Path
+
+import pytest
+
 from flakytest.profiling.analysis import build_profile
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
 SITE = "/venv/lib/python3.15/site-packages"
+STDLIB = sysconfig.get_paths()["stdlib"]
 
 
 def build(tmp_path, tests, stacks=(), context=None, **run):
@@ -92,3 +98,91 @@ def test_reuse_test_database_with_xdist_workers(tmp_path):
     insight = next(i for i in migrations_doc(tmp_path, 4)["insights"] if i["id"] == "reuse-test-database")
     assert "across 4 pytest-xdist workers" in insight["summary"]
     assert "per run" not in insight["summary"]
+
+
+DB_UTILS = f"{SITE}/django/db/backends/utils.py"
+POSTGRES = {"databases": ["django.db.backends.postgresql"]}
+
+
+def debug_cursor_doc(tmp_path, debug):
+    nodeid = "tests/test_a.py::test_queries"
+    test = (str(tmp_path / "tests/test_a.py"), "test_queries", 3)
+    execute = (DB_UTILS, "CursorDebugWrapper.execute", 120)
+    stacks = [
+        # the query itself, under the debug cursor: not DEBUG's cost
+        (
+            phase_stack(
+                nodeid, "call", test, execute, (DB_UTILS, "_execute", 100), (f"{SITE}/psycopg/cursor.py", "execute", 9)
+            ),
+            900,
+        ),
+        # what DEBUG adds: timing and recording the query
+        (phase_stack(nodeid, "call", test, execute, (DB_UTILS, "CursorDebugWrapper.debug_sql", 140)), 100),
+    ]
+    context = {"django": POSTGRES | {"debug": debug}}
+    return build(tmp_path, [record(nodeid, call=10.0)], stacks, context)
+
+
+def test_debug_cursor_costs_only_its_bookkeeping(tmp_path):
+    insight = next(i for i in debug_cursor_doc(tmp_path, debug=True)["insights"] if i["id"] == "django-debug-in-tests")
+    assert insight["impact"] == pytest.approx(1.0)  # the debug_sql samples, not 20% of all query time
+
+
+def test_debug_cursor_without_debug_is_assert_num_queries(tmp_path):
+    assert "django-debug-in-tests" not in ids(debug_cursor_doc(tmp_path, debug=False))
+
+
+def test_wrapping_middleware_owns_only_its_own_work(tmp_path):
+    nodeid = "tests/test_api.py::test_schema"
+    test = (str(tmp_path / "tests/test_api.py"), "test_schema", 3)
+    middleware = (f"{SITE}/whitenoise/middleware.py", "WhiteNoiseMiddleware.__call__", 123)
+    view = (str(tmp_path / "app/views.py"), "schema", 10)
+    stat = (str(Path(STDLIB) / "genericpath.py"), "isfile", 30)
+    stacks = [
+        (
+            phase_stack(
+                nodeid, "call", test, middleware, view, (f"{SITE}/drf_spectacular/generators.py", "get_schema", 1)
+            ),
+            9000,
+        ),
+        (phase_stack(nodeid, "call", test, middleware, (f"{SITE}/whitenoise/base.py", "find_file", 5), stat), 10),
+    ]
+    doc = build(tmp_path, [record(nodeid, call=9.01)], stacks, {"django": {"debug": False}})
+    assert "django-static-storage" not in ids(doc)
+    big = build(tmp_path, [record(nodeid, call=9.01)], [(stacks[1][0], 9000)], {"django": {"debug": False}})
+    static = next(i for i in big["insights"] if i["id"] == "django-static-storage")
+    assert static["impact"] == pytest.approx(9.01)  # whitenoise's own lookups, stat() included
+
+
+def durability_doc(tmp_path, db):
+    tests = [record(f"tests/test_{i}.py::test_{i}", call=1.0, db=db) for i in range(40)]
+    return build(tmp_path, tests, backend="none", context={"django": POSTGRES})
+
+
+def test_no_durability_insight_when_nothing_commits(tmp_path):
+    db = {
+        "queries": 25,
+        "time": 0.8,
+        "duplicates": [],
+        "commits": 0,
+        "commit_time": 0.0,
+        "autocommit_writes": 0,
+        "autocommit_write_time": 0.0,
+    }
+    assert "db-server-durability" not in ids(durability_doc(tmp_path, db))
+
+
+def test_durability_insight_from_commits(tmp_path):
+    db = {
+        "queries": 25,
+        "time": 0.8,
+        "duplicates": [],
+        "commits": 30,
+        "commit_time": 0.1,
+        "autocommit_writes": 20,
+        "autocommit_write_time": 0.05,
+    }
+    insight = next(i for i in durability_doc(tmp_path, db)["insights"] if i["id"] == "db-server-durability")
+    assert insight["impact"] == pytest.approx(6.0)
+    assert "1200 commits" in insight["summary"]
+    assert "800 writes outside a transaction" in insight["summary"]

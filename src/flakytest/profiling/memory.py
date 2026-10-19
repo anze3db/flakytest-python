@@ -1,17 +1,25 @@
-"""Per-test memory: the test process's resident memory (RSS) when each test starts and ends, and its peak while it
-runs.
+"""Per-test memory: the test process's memory when each test starts and ends, and its peak while it runs.
 
 On Linux the kernel's peak counter (VmHWM) is reset before every test by writing 5 to /proc/self/clear_refs, so each
-test gets its own peak. Private memory (RssAnon, which excludes the interpreter and shared libraries every process
-maps) is recorded too, so pytest-xdist workers can be added up. Elsewhere the peak counter can't be reset: a test's
-peak is only known when it raised the process's peak, and with psutil the start and end RSS are known too.
+test gets its own peak. What a test needed and kept is private (anonymous) memory, RssAnon: resident memory also
+counts file pages (the interpreter, shared libraries, mapped files) that the kernel drops and reads back as it likes,
+especially in a memory-limited container, which would show up as tests "needing" memory they never allocated.
+The peak counter only exists for resident memory as a whole, so a test's private peak is estimated as its peak less
+the larger of the file-backed memory it started and ended with.
+
+A test's window starts before its setup and ends when the next test starts, so what pytest frees after a test
+isn't counted as kept. Class, module and session fixtures restart the window when they finish: the memory they keep
+belongs to them (it's recorded on the fixture), not to the test that happened to run them first.
+
+Elsewhere the peak counter can't be reset: a test's peak is only known when it raised the process's peak, and with
+psutil the start and end RSS are known too.
 """
 
 import contextlib
+import os
 import re
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 try:
@@ -24,10 +32,10 @@ try:
 except ImportError:
     psutil = None
 
-STATUS = Path("/proc/self/status")
-CLEAR_REFS = Path("/proc/self/clear_refs")
-RESET_PEAK = "5"  # resets VmHWM to the current RSS (Linux 4.0+)
-FIELDS = re.compile(r"^(VmRSS|VmHWM|RssAnon):\s+(\d+) kB", re.MULTILINE)
+STATUS = "/proc/self/status"
+CLEAR_REFS = "/proc/self/clear_refs"
+RESET_PEAK = b"5"  # resets VmHWM to the current RSS (Linux 4.0+)
+FIELDS = re.compile(rb"^(VmRSS|VmHWM|RssAnon):\s+(\d+) kB", re.MULTILINE)
 KB = 1024
 MB = 1024**2
 GB = 1024**3
@@ -40,13 +48,17 @@ class MemoryMeter:
     "maxrss" (the peak only when a test raised it; maxrss doesn't know the current RSS), or None (nothing)."""
 
     def __init__(self) -> None:
+        self.status_fd: int | None = None
+        self.clear_fd: int | None = None
         self.source = self._detect()
         self.max_peak = 0
 
     def _detect(self) -> str | None:
-        if sys.platform.startswith("linux") and STATUS.exists():
+        if sys.platform.startswith("linux") and os.path.exists(STATUS):
             try:
-                CLEAR_REFS.write_text(RESET_PEAK)
+                self.status_fd = os.open(STATUS, os.O_RDONLY)
+                self.clear_fd = os.open(CLEAR_REFS, os.O_WRONLY)
+                os.write(self.clear_fd, RESET_PEAK)
             except OSError:
                 return "psutil" if psutil else "maxrss"
             return "linux"
@@ -59,21 +71,33 @@ class MemoryMeter:
         return self.source == "linux"
 
     def start(self) -> dict[str, Any] | None:
-        """Call before the test's setup."""
+        """A reading that starts a test's window (and resets the peak): call before the test's setup."""
         if self.source is None:
             return None
-        if self.source == "linux":
-            with contextlib.suppress(OSError):
-                CLEAR_REFS.write_text(RESET_PEAK)
         reading = self._read()
+        if self.source == "linux" and self.clear_fd is not None:
+            with contextlib.suppress(OSError):
+                os.write(self.clear_fd, RESET_PEAK)
         self.max_peak = max(self.max_peak, reading.get("peak") or 0)
         return reading | {"at": time.time()}
 
-    def stop(self, started: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Call after the test's teardown: what the test used, in bytes."""
+    def read(self) -> dict[str, Any] | None:
+        """A reading without resetting anything."""
+        return self._read() if self.source is not None else None
+
+    def restart(self, started: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Start a test's window again, after a fixture that other tests share."""
         if started is None:
             return None
-        reading = self._read()
+        return self.start() | {"at": started["at"]}  # type: ignore[operator]
+
+    def stop(self, started: dict[str, Any] | None, reading: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """What a test used, in bytes, from its start reading and the reading that ends it (the next test's start
+        reading, else a new one)."""
+        if started is None:
+            return None
+        if reading is None:
+            reading = self._read()
         result: dict[str, Any] = {"at": started["at"]}
         start, end, peak = started.get("rss"), reading.get("rss"), reading.get("peak")
         if self.source != "linux":
@@ -87,24 +111,31 @@ class MemoryMeter:
             result["start"] = start
         if end is not None:
             result["end"] = end
+        private_start, private_end = started.get("private"), reading.get("private")
+        if private_start is not None and private_end is not None:
+            result["private_start"] = private_start
+            result["private_end"] = private_end
         if peak is not None:
             result["peak"] = max(peak, start or 0, end or 0)
-            if start is not None:
+            if private_start is not None and private_end is not None and start is not None and end is not None:
+                files = max(start - private_start, end - private_end)
+                result["peak_increase"] = max(0, result["peak"] - files - private_start)
+            elif start is not None:
                 result["peak_increase"] = result["peak"] - start
-        if start is not None and end is not None:
+        if private_start is not None and private_end is not None:
+            result["growth"] = private_end - private_start
+        elif start is not None and end is not None:
             result["growth"] = end - start
-        if started.get("private") is not None and reading.get("private") is not None:
-            result["private_start"] = started["private"]
-            result["private_end"] = reading["private"]
         return result
 
     def _read(self) -> dict[str, Any]:
         if self.source == "linux":
             try:
-                values = {name: int(kb) * KB for name, kb in FIELDS.findall(STATUS.read_text())}
+                text = os.pread(self.status_fd, 4096, 0)  # type: ignore[arg-type]
             except OSError:
                 return {}
-            return {"rss": values.get("VmRSS"), "peak": values.get("VmHWM"), "private": values.get("RssAnon")}
+            values = {name: int(kb) * KB for name, kb in FIELDS.findall(text)}
+            return {"rss": values.get(b"VmRSS"), "peak": values.get(b"VmHWM"), "private": values.get(b"RssAnon")}
         if self.source == "psutil":
             info = psutil.Process().memory_info()
             peak = getattr(info, "peak_wset", None) or maxrss()
@@ -127,13 +158,12 @@ def test_memory(memory: dict[str, Any] | None, started: float) -> dict[str, Any]
 
 
 def private_peak(memory: dict[str, Any]) -> int | None:
-    """The test's peak private memory: its peak RSS less the shared part (RSS - private) it started with."""
-    peak = memory.get("peak")
-    if peak is None:
+    """The test's peak private memory: what it started with plus what it needed."""
+    if memory.get("peak") is None:
         return memory.get("private_end", memory.get("end"))
-    if memory.get("private_start") is not None and memory.get("start") is not None:
-        return peak - (memory["start"] - memory["private_start"])
-    return peak
+    if memory.get("private_start") is not None and memory.get("peak_increase") is not None:
+        return memory["private_start"] + memory["peak_increase"]
+    return memory["peak"]
 
 
 def summarize(tests: list[dict[str, Any]], source: str | None) -> dict[str, Any] | None:

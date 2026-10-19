@@ -33,8 +33,14 @@ def weighted_stacks(doc: dict[str, Any], tests: list[dict[str, Any]], phases: tu
             total = test["samples"].get(phase) or 0
             if not total:
                 continue
+            threads = test.get("thread_stacks", {}).get(phase)
+            categories = doc.get("stack_categories", {})
             for node, count in stacks:
+                if threads and categories.get(str(node)) == "waiting":
+                    continue  # the background threads' work below stands in for this waiting
                 yield stack_frames(doc, node, cache), count / total * test["phases"][phase]
+            for node, seconds in threads or ():
+                yield stack_frames(doc, node, cache), seconds
 
 
 def build_tree(doc: dict[str, Any], tests: list[dict[str, Any]], *, hide_framework: bool = True) -> Node:

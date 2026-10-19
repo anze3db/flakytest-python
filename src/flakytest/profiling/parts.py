@@ -3,7 +3,8 @@ the whole suite in memory).
 
 Every part is a valid profile document: the run and summary, some of the tests, and only the frames, stack nodes,
 categories and source lines those tests use (renumbered). The first part also carries the session-wide insights,
-warnings and fixtures. "part": {"index", "count"} tells flakytest.dev how to put them back together.
+warnings, fixtures and the folded tests' suite tree. "part": {"index", "count"} tells flakytest.dev how to put them
+back together.
 """
 
 import json
@@ -11,7 +12,7 @@ from typing import Any
 
 PART_TESTS = 2000
 PART_BYTES = 16 * 1024 * 1024  # uncompressed JSON per part; flakytest.dev accepts up to 50 MB
-SESSION_KEYS = ("insights", "warnings", "fixtures")
+SESSION_KEYS = ("insights", "warnings", "fixtures", "suite_stacks")
 TABLE_KEYS = ("frames", "stacks", "stack_categories", "sources")
 
 
@@ -83,6 +84,11 @@ def subset(profile: dict[str, Any], tests: list[dict[str, Any]], *, with_session
         entry["stacks"] = {
             phase: [[node_id(node), count] for node, count in pairs] for phase, pairs in test["stacks"].items()
         }
+        if "thread_stacks" in test:
+            entry["thread_stacks"] = {
+                phase: [[node_id(node), seconds] for node, seconds in pairs]
+                for phase, pairs in test["thread_stacks"].items()
+            }
         entry["segments"] = [segment | {"frame": frame_id(segment["frame"])} for segment in test["segments"]]
         entry["hot_lines"] = [line | {"frame": frame_id(line["frame"])} for line in test["hot_lines"]]
         new_tests.append(entry)
@@ -95,6 +101,9 @@ def subset(profile: dict[str, Any], tests: list[dict[str, Any]], *, with_session
             insight
             | {"locations": [location | {"frame": frame_id(location["frame"])} for location in insight["locations"]]}
             for insight in profile.get("insights", [])
+        ]
+        part["suite_stacks"] = [
+            [node_id(node), category, seconds] for node, category, seconds in profile.get("suite_stacks", [])
         ]
     return part | {
         "frames": new_frames,
