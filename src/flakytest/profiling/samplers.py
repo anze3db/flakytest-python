@@ -126,6 +126,10 @@ class Sampler:
                 self.error = f"could not start {self.backend}: {e}"
                 return False
         allow_tracing_by(self.process.pid)
+        # Let the tests win when they compete with the profiler for a CPU (tachyon_sampler renices itself)
+        if self.backend == "py-spy" and hasattr(os, "setpriority"):
+            with contextlib.suppress(OSError):
+                os.setpriority(os.PRIO_PROCESS, self.process.pid, 10)
 
         deadline = time.monotonic() + START_TIMEOUT
         while time.monotonic() < deadline:

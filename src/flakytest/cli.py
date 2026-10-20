@@ -253,7 +253,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             }
             lines.append(f"ptrace_scope={value}: {note.get(value, 'unknown')}")
     elif sys.platform == "darwin":
-        lines.append("macOS: sampling profilers need root, run `sudo -E flakytest run` if attaching fails")
+        lines.append(
+            "macOS: sampling profilers need root, run `sudo -E flakytest run` if attaching fails, or run the tests "
+            "in a Linux container started with --cap-add SYS_PTRACE (which also measures memory per test exactly)"
+        )
     lines.append(f"Runs directory: {runs.runs_dir(root())}")
     lines.append(
         f"Cloud upload: {'on (FLAKYTEST_SECRET_TOKEN is set)' if cloud.token else 'off (no FLAKYTEST_SECRET_TOKEN)'}"

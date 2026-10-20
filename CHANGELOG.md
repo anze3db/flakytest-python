@@ -11,6 +11,31 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+- More accurate reports, from running 2026.0b1 on a 94,000-test Django suite:
+  - Code that wraps other work (WhiteNoise and other middleware, freezegun, Celery's eager tasks, the debug
+    toolbar, Hypothesis) only counts its own work, not everything under it.
+  - `DEBUG = True` costs what Django's debug cursor adds to each query, and DEBUG is read while tests run;
+    the database durability suggestion is based on the commits and writes outside a transaction it measured
+    (none in a `TestCase`-only suite).
+  - Network is real socket and TLS I/O only (an HTTP client parsing JSON is serialization), the garbage
+    collector is recognised under tachyon, and categories are decided by context (imports, migrations, …)
+    from the root, and otherwise by the deepest frame.
+  - With tachyon, other threads are sampled while the main thread waits, so a thread pool's work shows up as
+    that work instead of "waiting 100%".
+  - Per-test memory is private memory, measured until the next test starts. Class, module and session
+    fixtures keep their own memory and queries, so session setup queries no longer look like a test's N+1.
+  - One-off warm-up (a fixture's first slow call in a process, imports) is set apart: the slowest tests are
+    ranked without it, with a note, and the report has a "One-off costs" section.
+  - A crashed pytest-xdist worker is reported, and its tests stay in the profile from what it recorded (or
+    from pytest's reports).
+- Much less overhead on large suites: each process builds its part of the profile in parallel and the
+  controller merges them (a 20,000-test synthetic profile: about 50s before, 12s now), the profile is smaller
+  (fast tests' call trees are folded into one suite-wide tree), the report loads `profile.js` instead of
+  embedding a second copy, comparing with the previous run reads a small `summary.json`, and exact timings
+  cost less per test. Big suites (over 10,000 tests) are sampled at 500 Hz, long tests at a quarter of the
+  rate, and profilers run at a lower priority than the tests.
+- `scripts/benchmark.py` (`just benchmark`) checks the overhead budget on a generated 5,000-test suite in CI.
+
 ## [2026.0b1](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b1) - 2026-10-18
 
 ### Highlights

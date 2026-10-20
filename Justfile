@@ -14,10 +14,10 @@ default:
 sync:
     uv sync
 
-# Run the tests; arguments go to pytest (`just test tests/test_hook.py -x`)
-# tests/test_flake.py fails on purpose unless FLAKYTEST_SECRET_TOKEN is set and flakytest.dev mutes it
+# tests/test_flake.py fails on purpose unless FLAKYTEST_SECRET_TOKEN is set and flakytest.dev mutes it.
 # pytest-xdist and Django are only for the suites in tests/test_accuracy.py: they aren't dev dependencies because
-# they need pytest 7+, and CI also tests pytest 6
+# they need pytest 7+, and CI also tests pytest 6.
+# Run the tests; arguments go to pytest (`just test tests/test_hook.py -x`)
 [group("test")]
 test *args:
     uv run --with pytest-xdist --with django pytest "$@"
@@ -40,6 +40,11 @@ test-all:
             just test-on "$py" "$pytest" -q
         done
     done
+
+# Check the overhead budget on a generated 5,000-test suite, as CI does (`just benchmark --workers 2`)
+[group("test")]
+benchmark *args:
+    uv run --with pytest-xdist scripts/benchmark.py "$@"
 
 # Lint, format check and type check, as CI does
 [group("check")]

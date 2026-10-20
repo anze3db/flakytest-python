@@ -11,15 +11,18 @@ from __future__ import annotations  # pytest 6 has no pytest.Parser, pytest.Conf
 import contextlib
 import datetime as dt
 import importlib.util
+import inspect
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
+import pluggy
 import pytest
 
 from flakytest import cloud
@@ -40,6 +43,15 @@ SAMPLER_WAIT = 30.0
 # and every sample slows the tests down a little
 LARGE_SUITE = 10_000
 LARGE_SUITE_RATE = 500
+BUSY_PY_SPY_RATE = 100
+SAVE_EVERY = 1.0  # seconds between writing the records of finished tests to disk
+# New-style hook wrappers (pluggy 1.1+) cost less per call than the old style, which pytest 6 still needs. Both
+# run the same code: `return (yield)` hands the result on in the new style and is ignored in the old.
+WRAPPER = (
+    {"wrapper": True}
+    if "wrapper" in inspect.signature(pluggy.HookimplMarker.__call__).parameters
+    else {"hookwrapper": True}
+)
 
 
 def add_options(parser: pytest.Parser) -> None:
@@ -56,7 +68,8 @@ def add_options(parser: pytest.Parser) -> None:
         type=int,
         default=int(os.environ.get("FLAKYTEST_PROFILE_RATE") or 0) or None,
         help=f"Samples per second (default: 1000 for tachyon, {LARGE_SUITE_RATE} with more than "
-        f"{LARGE_SUITE:,} tests; 500 for py-spy). Raise it when the report says tests were undersampled.",
+        f"{LARGE_SUITE:,} tests; 500 for py-spy, {BUSY_PY_SPY_RATE} when pytest-xdist workers use every CPU). "
+        "Raise it when the report says tests were undersampled.",
     )
     group.addoption(
         "--flakytest-backend",
@@ -156,6 +169,11 @@ class ProfilerPlugin:
             self.backend, self.backend_error = "none", None
         self.explicit_rate = _option(config, "flakytest_rate")
         self.rate = self.explicit_rate or DEFAULT_RATES.get(self.backend, 1000)
+        workers = int(os.environ.get("PYTEST_XDIST_WORKER_COUNT") or 0)
+        if self.backend == "py-spy" and not self.explicit_rate and workers >= (os.cpu_count() or 1):
+            # py-spy needs a lot of CPU per sample: with every CPU running a worker, profilers at the usual rate
+            # would slow the tests down several times
+            self.rate = BUSY_PY_SPY_RATE
         self.sampler: Sampler | None = None
         self.markers = PhaseMarkers()
         self.queries = QueryTracker()
@@ -170,9 +188,12 @@ class ProfilerPlugin:
         self.fixture_stats = FixtureStats()
         self.django_debug: bool | None = None
         self.tests_file: Any = None
+        self.saved_at = 0.0
+        self.facts: Background | None = None
         # The controller's view of every test, from the reports workers send, and the workers that crashed
         self.reports: dict[str, dict[str, Any]] = {}
         self.crashed: dict[str, str] = {}
+        self.last_report = self.started
         self.profile: dict[str, Any] | None = None
         self.report_path: Path | None = None
         self.upload_url: str | None = None
@@ -206,9 +227,12 @@ class ProfilerPlugin:
                 self.sampler = None
         if self.sampler is not None:  # only samples need to know which test they were taken in
             self.markers.install()
-        if not self.controller:
+        if self.worker:  # only the controller can use what a crashed process recorded
             self.tests_file = (self.run_dir / f"tests-{self.pid}.jsonl").open("a", encoding="utf-8")
+        if not self.controller:
             self._write_meta("running")
+        if not self.worker:  # git runs a few subprocesses: let them run while the tests do
+            self.facts = Background(lambda: {"environment": detect_environment(), "git": get_git_data()})
 
     def _process(self, status: str) -> dict[str, Any]:
         sampler = self.sampler
@@ -233,13 +257,13 @@ class ProfilerPlugin:
         if self.sampler is not None and not self.explicit_rate and len(session.items) > LARGE_SUITE:
             self.sampler.set_rate(LARGE_SUITE_RATE)
 
-    @pytest.hookimpl(hookwrapper=True)
+    @pytest.hookimpl(**WRAPPER)  # type: ignore[call-overload]
     def pytest_runtest_protocol(self, item: pytest.Item):
         nodeid = item.nodeid
         cls = getattr(item, "cls", None)
         record = new_record(
             nodeid,
-            item.location[0],
+            nodeid.partition("::")[0],  # like item.location[0] (relative to the rootdir), which costs ~60 µs
             cls.__name__ if cls is not None else None,
             getattr(item, "name", nodeid.rsplit("::", 1)[-1]),
             self.worker,
@@ -264,7 +288,7 @@ class ProfilerPlugin:
         self.queries.current = stats
         self.markers.current_key = record["key"]
         try:
-            yield
+            return (yield)
         finally:
             self.markers.current_key = None
             self.queries.current = None
@@ -273,7 +297,6 @@ class ProfilerPlugin:
                 record["db"] = stats.as_dict()
             self.pending = (record, self.current_memory)
             self.current_memory = None
-            self._save(record)
             if self.django_debug is None and "call" in record["phases"]:
                 # pytest-django sets DEBUG for the session in the first test's setup and restores it at the end
                 self.django_debug = _django_debug()
@@ -288,17 +311,19 @@ class ProfilerPlugin:
             if started and started.get("warmup"):
                 used["warmup"] = started["warmup"]
             record["memory"] = used
-            self._save({"nodeid": record["nodeid"], "memory": used})
+        self._save(record)
 
     def _save(self, record: dict[str, Any]) -> None:
-        """Append to this process's records as soon as a test is done, so they survive the process crashing.
-        Later lines for the same test add to earlier ones."""
+        """Append a finished test to this process's records, so they survive the process crashing: written at most
+        a second later (pytest's own reports fill in the tests a crash loses)."""
         if self.tests_file is not None:
             with contextlib.suppress(OSError, ValueError):
                 self.tests_file.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
-                self.tests_file.flush()
+                if (now := time.monotonic()) - self.saved_at >= SAVE_EVERY:
+                    self.tests_file.flush()
+                    self.saved_at = now
 
-    @pytest.hookimpl(hookwrapper=True)
+    @pytest.hookimpl(**WRAPPER)  # type: ignore[call-overload]
     def pytest_fixture_setup(self, fixturedef: Any):
         record = self.current
         shared = fixturedef.scope != "function"
@@ -311,7 +336,7 @@ class ProfilerPlugin:
             before = self.memory.read()
         started = time.perf_counter()
         try:
-            yield
+            return (yield)
         finally:
             duration = time.perf_counter() - started
             nodeid = record["nodeid"] if record is not None else None
@@ -331,6 +356,7 @@ class ProfilerPlugin:
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when not in ("setup", "call", "teardown"):
             return
+        self.last_report = time.perf_counter()
         if self.controller:
             record = self.reports.get(report.nodeid)
             if record is None:
@@ -380,7 +406,11 @@ class ProfilerPlugin:
 
     def _build_part(self) -> None:
         """This process's part of the profile (under pytest-xdist: built in every worker at once)."""
+        started = time.perf_counter()
         self._write_meta("stopping")  # before the sampler stops: if it takes the process down, the tests survive
+        if self.tests_file is not None:
+            with contextlib.suppress(OSError, ValueError):
+                self.tests_file.flush()
         if self.sampler is not None:
             if self.sampler.stop() is None:
                 self.backend_error = self.sampler.error
@@ -391,6 +421,7 @@ class ProfilerPlugin:
             "context": self._context(),
         }
         part = analysis.build_part(process, self._rootdir(), self.started_at.timestamp())
+        part["build_seconds"] = round(time.perf_counter() - started, 3)
         write_json(self.run_dir / f"part-{self.pid}.json", part)
         self._write_meta("done")
 
@@ -472,6 +503,7 @@ class ProfilerPlugin:
         return analysis.build_part(process, self._rootdir(), self.started_at.timestamp()), len(missing)
 
     def _build(self, exitstatus: int) -> None:
+        started = time.perf_counter()
         parts = self._parts()
         backfill, missing = self._backfill(parts) if self.controller else (None, 0)
         recovered = [p.get("worker") for p in parts if p.get("worker") in self.crashed]
@@ -492,8 +524,7 @@ class ProfilerPlugin:
             "flakytest_version": __version__,
             "python": python_info(),
             "platform": platform_info(),
-            "environment": detect_environment(),
-            "git": get_git_data(),
+            **(self.facts.result() if self.facts else {"environment": detect_environment(), "git": get_git_data()}),
             "profiler": {
                 "backend": backend,
                 "rate": rate,
@@ -504,6 +535,13 @@ class ProfilerPlugin:
             "plugins": sorted((context.get("pytest") or {}).get("plugins", [])),
         }
         self.profile = analysis.merge(run, parts, self._rootdir(), context)
+        # How long building the profile took after the last test: the processes' parts (built at the same time
+        # under pytest-xdist), then merging them. Writing the files comes on top.
+        run["postprocessing"] = {
+            "tests_finished_at": round(self.last_report - self.started, 3),  # seconds into the session
+            "parts": max((p.get("build_seconds") or 0.0 for p in parts), default=0.0),
+            "merge": round(time.perf_counter() - started, 3),
+        }
         if self.crashed or missing:
             self.profile["warnings"].insert(0, self._missing_warning(missing, recovered))
         profile_json = json.dumps(self.profile, separators=(",", ":"), default=str)
@@ -595,6 +633,29 @@ class ProfilerPlugin:
 
 def r(value: float) -> float:
     return round(value, 6)
+
+
+class Background:
+    """A function's result, worked out in a daemon thread."""
+
+    def __init__(self, fn: Any) -> None:
+        self.fn = fn
+        self.value: Any = None
+        self.error: BaseException | None = None
+        self.thread = threading.Thread(target=self._run, name="flakytest-facts", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        try:
+            self.value = self.fn()
+        except BaseException as e:  # re-raised where the result is needed
+            self.error = e
+
+    def result(self) -> Any:
+        self.thread.join()
+        if self.error is not None:
+            raise self.error
+        return self.value
 
 
 def _running(pid: int) -> bool:

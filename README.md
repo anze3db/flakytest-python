@@ -60,6 +60,7 @@ Every run writes `.flakytest/runs/<run id>/` with:
   a call tree (pytest internals hidden), hot functions, fixtures, SQL queries and repeated queries
   (N+1), and the suggestions that apply. `flakytest serve` serves it on localhost.
 * `profile.json` — everything in the report, documented in [docs/profile-format.md](https://github.com/anze3db/flakytest-python/blob/main/docs/profile-format.md).
+  `profile.js` is the same data for `index.html`, and `summary.json` is what the next run compares itself with.
 
 `.flakytest/` ignores itself in git.
 
@@ -70,6 +71,11 @@ own tests): how much it needed above what its process already had (its peak), an
 report lists the tests that needed the most (the **Most memory** filter in the HTML report), each worker's
 peak, and on Linux all workers added up over time, which is what a CI machine needs to avoid running out of
 memory. A process that keeps growing gets a `memory_growth` warning naming the tests it grew in.
+
+What a test needed and kept is private memory, measured from before its setup until the next test starts. A
+class, module or session fixture keeps its own memory (and its own queries): the test that happened to run it
+first isn't charged for it. The first test in each process and class, and tests that set up such a fixture, are
+left out of the tests that needed the most, since they pay for warming up.
 
 Measuring costs well under a millisecond per test. Limitations:
 
@@ -130,22 +136,29 @@ claude mcp add flakytest -- flakytest mcp
 | Option | Environment | Default |
 |---|---|---|
 | `--flakytest-profile` | `FLAKYTEST_PROFILE=1` | off |
-| `--flakytest-rate N` | `FLAKYTEST_PROFILE_RATE` | 1000 (tachyon), 500 (py-spy) |
+| `--flakytest-rate N` | `FLAKYTEST_PROFILE_RATE` | 1000 (tachyon; 500 above 10,000 tests), 500 (py-spy; 100 when pytest-xdist workers use every CPU) |
 | `--flakytest-backend auto\|tachyon\|py-spy\|none` | `FLAKYTEST_PROFILE_BACKEND` | `auto` |
 | `--flakytest-output DIR` | `FLAKYTEST_PROFILE_DIR` | `<rootdir>/.flakytest/runs` |
 | | `FLAKYTEST_ENV` | detected: `ci:github-actions:<job>`, `local:<user>@<host>`, … |
 
-If tests are too short for the sampling rate, the report says so and suggests a rate: rerun with
-`--flakytest-rate 5000` (tachyon reads the process from the outside, so high rates are cheap).
+If tests are too short for the sampling rate, the report says so and suggests a rate: rerun the tests you care
+about with it, e.g. `flakytest run --rate 5000 -- tests/test_api.py`. Suite-wide numbers and suggestions don't
+need a high rate; a long test is sampled at a quarter of the rate once it has 200 samples.
 
 ## How it works
 
 pytest runs every test phase from `CallInfo.from_call`. flakytest wraps it so each phase runs inside a
 tiny generated function named after the test and phase (`__flakytest_call_1f3a9c0d2b4e__`). A sampling
-profiler attached to the pytest process (from a separate process, so it barely slows the tests down)
+profiler attached to the pytest process (from a separate process, at a lower priority than the tests)
 captures that frame in every stack it samples, which attributes each sample to a test and phase exactly,
 with no clock synchronisation, for tachyon and py-spy alike, and per pytest-xdist worker. pytest's own
-durations stay the source of truth; samples only decide how a phase's time is split.
+durations stay the source of truth; samples only decide how a phase's time is split. With tachyon, other
+threads are sampled while the main thread waits, so work in a thread pool shows up as that work, not as
+"waiting".
+
+Each test process builds its part of the profile when it finishes (pytest-xdist workers at the same time) and
+the controller merges them. Every worker records its tests as they finish, so when one crashes the report
+says so and keeps them (or takes them from pytest's reports).
 
 Fixture setup times are measured exactly with a `pytest_fixture_setup` wrapper, and Django
 (`execute_wrapper`) and SQLAlchemy (engine events) queries are counted per test.
@@ -153,7 +166,15 @@ Fixture setup times are measured exactly with a `pytest_fixture_setup` wrapper, 
 **Permissions.** Sampling profilers read another process's memory. On Linux flakytest allows its own
 profiler to attach (`prctl(PR_SET_PTRACER)`), which is enough with the default `ptrace_scope=1`
 (including GitHub Actions). In Docker you may need `--cap-add SYS_PTRACE`. On macOS profilers need
-root: `sudo -E flakytest run`. `flakytest doctor` checks your setup.
+root: `sudo -E flakytest run`, or run the tests in a Linux container, which also gets you exact per-test memory:
+
+```console
+docker run --rm -it --cap-add SYS_PTRACE -v "$PWD":/src -w /src python:3.15 \
+  sh -c "pip install -r requirements.txt flakytest && pytest --flakytest-profile"
+```
+
+(with your project's install step). Tests that use services on your Mac reach them at `host.docker.internal`, or
+with `--network host` where your Docker supports it. `flakytest doctor` checks your setup.
 
 ## flakytest.dev
 

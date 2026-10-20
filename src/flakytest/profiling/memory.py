@@ -17,7 +17,6 @@ psutil the start and end RSS are known too.
 
 import contextlib
 import os
-import re
 import sys
 import time
 from typing import Any
@@ -35,7 +34,6 @@ except ImportError:
 STATUS = "/proc/self/status"
 CLEAR_REFS = "/proc/self/clear_refs"
 RESET_PEAK = b"5"  # resets VmHWM to the current RSS (Linux 4.0+)
-FIELDS = re.compile(rb"^(VmRSS|VmHWM|RssAnon):\s+(\d+) kB", re.MULTILINE)
 KB = 1024
 MB = 1024**2
 GB = 1024**3
@@ -134,13 +132,29 @@ class MemoryMeter:
                 text = os.pread(self.status_fd, 4096, 0)  # type: ignore[arg-type]
             except OSError:
                 return {}
-            values = {name: int(kb) * KB for name, kb in FIELDS.findall(text)}
-            return {"rss": values.get(b"VmRSS"), "peak": values.get(b"VmHWM"), "private": values.get(b"RssAnon")}
+            return {
+                "rss": field(text, b"\nVmRSS:"),
+                "peak": field(text, b"\nVmHWM:"),
+                "private": field(text, b"\nRssAnon:"),
+            }
         if self.source == "psutil":
             info = psutil.Process().memory_info()
             peak = getattr(info, "peak_wset", None) or maxrss()
             return {"rss": info.rss, "peak": peak}
         return {"peak": maxrss()}
+
+
+def field(status: bytes, name: bytes) -> int | None:
+    """A "Name:   1234 kB" line of /proc/self/status, in bytes (a regex costs more than the read itself)."""
+    start = status.find(name)
+    if start < 0:
+        return None
+    start += len(name)
+    end = status.find(b" kB", start)
+    try:
+        return int(status[start:end]) * KB
+    except ValueError:
+        return None
 
 
 def maxrss() -> int | None:

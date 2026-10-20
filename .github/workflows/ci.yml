@@ -51,3 +51,16 @@ jobs:
           extra=()
           if [ "$PYTEST" != 6 ]; then extra=(--with pytest-xdist --with django); fi
           uv run --python "$PY" --with "pytest~=$PYTEST.0" "${extra[@]}" pytest -q
+
+  # flakytest's overhead budget on a generated 5,000-test suite: building the profile after the last test takes at
+  # most 10% of the run, and exact mode (no sampling) slows it down by at most 5%
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.15"
+      - run: uv run --python 3.15 --with pytest-xdist scripts/benchmark.py --workers 2

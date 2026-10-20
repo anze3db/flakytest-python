@@ -85,7 +85,10 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       "error": null                      // why profiling was unavailable, if backend == "none"
     },
     "workers": 1,                        // pytest-xdist workers (1 without xdist)
-    "plugins": ["django", "xdist", "cov"]
+    "plugins": ["django", "xdist", "cov"],
+    // building the profile after the last test (seconds into the session it finished): the slowest process's
+    // part (they're built at the same time), then merging them on the controller, writing the files comes on top
+    "postprocessing": {"tests_finished_at": 82.1, "parts": 1.2, "merge": 0.4}
   },
 
   "summary": {
