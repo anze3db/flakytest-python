@@ -144,7 +144,7 @@ def test_first():
     assert test["db"]["queries"] == 1
     assert test["db"]["duplicates"] == []
     setup = next(f for f in test["fixtures"] if f["name"] == "django_db_setup")
-    assert setup["db"]["duplicates"][0]["count"] == 20
+    assert setup["db"]["duplicates"][0]["count"] >= 20  # the 20 above, and migrate's own on some versions
     assert "n-plus-one" not in ids(profile)
 
 
