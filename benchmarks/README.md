@@ -10,8 +10,10 @@ https://flakytest.dev/guides/py-spy-vs-tachyon/.
 $ ./setup.sh
 ```
 
-This creates `env3.14` (with py-spy) and `env3.15` (tachyon), both with the plugin from this checkout, and installs
-two switches the benchmarks use:
+This creates `env3.14` (with py-spy) and `env3.15` (tachyon), both with the plugin at commit `f649290`, the version
+the results below were measured with. Later versions changed how the plugin runs its samplers (tachyon's sampler
+takes a control file and writes JSON lines, py-spy runs at a lower priority), so the harness targets that commit.
+`./setup.sh <git ref>` installs another version. It also installs two switches the benchmarks use:
 
 - `BENCH_PYSPY_BLOCKING=1`: `env3.14/bin/py-spy` is a wrapper (`py-spy-wrapper.sh`) that drops `--nonblocking` from
   the command the plugin runs.

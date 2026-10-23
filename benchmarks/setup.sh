@@ -1,11 +1,14 @@
 #!/bin/bash
 # Create the two environments the benchmarks run in: Python 3.14 with py-spy, Python 3.15 with tachyon.
-# Both install the plugin from this checkout.
+# Both install the plugin at the commit the published results were measured with: the harness drives its samplers
+# directly, and later versions changed them. Pass another git ref to benchmark that instead.
 set -euo pipefail
 cd "$(dirname "$0")"
+ref="${1:-f649290195fd8621e29425210878380cf1867023}"
 for v in 3.14 3.15; do
   uv venv -q --python "$v" "env$v"
-  VIRTUAL_ENV="$PWD/env$v" uv pip install -q -e "..[py-spy]" pytest-xdist pytest-django django
+  VIRTUAL_ENV="$PWD/env$v" uv pip install -q "flakytest[py-spy] @ git+https://github.com/anze3db/flakytest-python@$ref" \
+    pytest-xdist pytest-django django
 done
 # py-spy wrapper: BENCH_PYSPY_BLOCKING=1 drops --nonblocking from the command the plugin runs
 mv env3.14/bin/py-spy env3.14/bin/py-spy-real
