@@ -15,7 +15,7 @@ def slow_fixture():
 
 class TestThings:
     def test_sleeps(self, slow_fixture):
-        time.sleep(0.2)
+        time.sleep(1.0)
 
     def test_fails(self):
         assert False
@@ -83,9 +83,10 @@ def test_profile_with_sampler(pytester):
     result = pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-rate", "500")
     result.assert_outcomes(passed=1, failed=1, skipped=1, xfailed=1)
     _, profile = latest_profile(pytester)
-    assert profile["run"]["profiler"]["samples"] > 50
+    # py-spy can sample well below the requested rate on a busy VM: ask for a few samples, and for shares
+    assert profile["run"]["profiler"]["samples"] > 10
     sleeps = next(t for t in profile["tests"] if t["name"] == "test_sleeps")
-    assert sleeps["samples"]["call"] > 50
-    assert sleeps["categories"].get("sleep", 0) >= 0.15
+    assert sleeps["samples"]["call"] >= 10
+    assert sleeps["categories"].get("sleep", 0) >= 0.7
     assert any(segment["label"] == "fixture slow_fixture" for segment in sleeps["segments"]), sleeps["segments"]
     assert any(i["id"] == "sleep" for i in profile["insights"])

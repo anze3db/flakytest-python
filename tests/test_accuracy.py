@@ -289,7 +289,11 @@ def test_sleep(i):
 def test_categories_of_real_work(pytester):
     package = pytester.mkpydir("botocore")
     (package / "loaders.py").write_text(
-        "import json\n\ndef load_service_model(text):\n    for _ in range(20):\n        json.loads(text)\n"
+        "import json\nimport time\n\n"
+        "def load_service_model(text):\n"
+        "    end = time.perf_counter() + 1.0\n"
+        "    while time.perf_counter() < end:\n"
+        "        json.loads(text)\n"
     )
     pytester.makepyfile(
         test_suite="""
@@ -310,7 +314,7 @@ def test_socket():
 
     def serve():
         conn, _ = server.accept()
-        time.sleep(0.3)
+        time.sleep(1.0)
         conn.sendall(b"hello\\n")
         conn.close()
 
@@ -322,11 +326,13 @@ def test_socket():
     pytester.runpytest_subprocess("--flakytest-profile").assert_outcomes(passed=2)
     _, profile = latest_profile(pytester)
     tests = by_name(profile)
-    json_test = tests["test_json_in_an_http_client"]["categories"]
-    assert max(json_test, key=json_test.get) == "serialization", json_test
-    assert "network" not in json_test
-    socket_test = tests["test_socket"]["categories"]
-    assert socket_test.get("network", 0) >= 0.2, socket_test
+    # Each test runs for a second, so even a profiler that samples far below the requested rate (py-spy on a busy
+    # VM) sees what it spends its time on
+    json_test = tests["test_json_in_an_http_client"]
+    assert json_test["categories"].get("serialization", 0) >= 0.5 * json_test["duration"], json_test["categories"]
+    assert "network" not in json_test["categories"]
+    socket_test = tests["test_socket"]
+    assert socket_test["categories"].get("network", 0) >= 0.6 * socket_test["duration"], socket_test["categories"]
 
 
 @needs_tachyon
