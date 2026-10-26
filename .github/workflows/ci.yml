@@ -19,6 +19,7 @@ jobs:
       - run: uv run ruff check src tests scripts
       - run: uv run ruff format --check src tests scripts
       - run: uv run mypy
+      - run: uvx pre-commit run --all-files --show-diff-on-failure
 
   test:
     runs-on: ubuntu-latest
