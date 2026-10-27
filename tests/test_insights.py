@@ -49,6 +49,15 @@ def test_parallelism_suggested_for_long_serial_suites(tmp_path):
     assert xdist["impact"] == 35.0  # 40s serially, ~5s on 8 CPUs
 
 
+@pytest.mark.parametrize(
+    ("runner", "command"), [("django", "manage.py test --parallel auto"), ("unittest", "flakytest pytest -n auto")]
+)
+def test_parallelism_suggestion_for_other_runners(tmp_path, runner, command):
+    tests = [record(f"tests/test_{i}.py::test_{i}", call=1.0) for i in range(40)]
+    doc = build(tmp_path, tests, context={"runner": runner}, backend="none", cpu_count=8)
+    assert command in next(i for i in doc["insights"] if i["id"] == "xdist")["fix"]
+
+
 def test_no_parallelism_suggestion_for_short_suites(tmp_path):
     doc = build(tmp_path, [record("tests/test_a.py::test_a", call=1.0)], backend="none")
     assert "xdist" not in ids(doc)
@@ -98,6 +107,17 @@ def test_reuse_test_database_with_xdist_workers(tmp_path):
     insight = next(i for i in migrations_doc(tmp_path, 4)["insights"] if i["id"] == "reuse-test-database")
     assert "across 4 pytest-xdist workers" in insight["summary"]
     assert "per run" not in insight["summary"]
+
+
+def test_reuse_test_database_with_django_parallel_workers(tmp_path):
+    """Django's workers clone the database the parent migrated: migrations ran once."""
+    stack = phase_stack("tests/test_a.py::test_a", "setup", (f"{SITE}/django/db/migrations/executor.py", "migrate", 1))
+    context = {"runner": "django", "django": {"databases": ["django.db.backends.sqlite3"]}}
+    tests = [record("tests/test_a.py::test_a", setup=4.0, call=0.1)]
+    doc = build(tmp_path, tests, [(stack, 4000)], context, workers=4)
+    insight = next(i for i in doc["insights"] if i["id"] == "reuse-test-database")
+    assert "per run" in insight["summary"]
+    assert "manage.py test --keepdb" in insight["fix"]
 
 
 DB_UTILS = f"{SITE}/django/db/backends/utils.py"

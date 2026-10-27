@@ -16,6 +16,10 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
   `FLAKYTEST_PROFILE` are removed. Flaky test tracking with `FLAKYTEST_SECRET_TOKEN` also needs `flakytest pytest`
   now, so update your CI command. `--flakytest-rate`, `--flakytest-backend` and `--flakytest-output` still work, as
   pytest options.
+- Profile unittest and Django tests without pytest: `flakytest python -m unittest …`, `flakytest python manage.py
+  test …` (`--parallel` included). The report is the same as with pytest: tests named like pytest's, setUp/test/
+  tearDown as the setup, call and teardown phases, `setUpClass`/`setUpTestData`/`setUpModule` and the test databases
+  as shared fixtures, and suggestions that use `--keepdb` and `--parallel`.
 - More accurate reports, from running 2026.0b1 on a 94,000-test Django suite:
   - Code that wraps other work (WhiteNoise and other middleware, freezegun, Celery's eager tasks, the debug
     toolbar, Hypothesis) only counts its own work, not everything under it.

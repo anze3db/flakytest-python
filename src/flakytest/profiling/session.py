@@ -283,6 +283,7 @@ class Session:
             return
         record, started = self.pending
         self.pending = None
+        record["duration"] = sum(record["phases"].values())  # unittest adds a class teardown after the test
         if used := self.memory.stop(started, reading):
             if started and started.get("warmup"):
                 used["warmup"] = started["warmup"]

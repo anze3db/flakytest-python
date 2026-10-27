@@ -1,6 +1,7 @@
 """Plain text and Markdown views of a profile: the terminal summary, and reports written for people and
 coding agents (`flakytest report`)."""
 
+import contextlib
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -201,6 +202,13 @@ def memory_markdown(profile: dict[str, Any], top: int) -> list[str]:
     return out
 
 
+RERUN = {
+    "pytest": "flakytest pytest <tests>",
+    "django": "flakytest python manage.py test <tests>",
+    "unittest": "flakytest python -m unittest <tests>",
+}
+
+
 def terminal_summary(
     profile: dict[str, Any], report_path: Path, upload_url: str | None = None, previous: dict[str, Any] | None = None
 ) -> list[str]:
@@ -223,6 +231,8 @@ def terminal_summary(
     if memory := memory_line(profile):
         lines.append(memory)
     lines.extend(f"⚠ {warning['message']}" for warning in profile["warnings"] if warning["code"] != "short_tests")
+    with contextlib.suppress(ValueError):
+        report_path = report_path.relative_to(Path.cwd())
     lines.append(f"Report: {report_path}")
     lines.append("  flakytest serve  ·  flakytest report --format markdown  (for agents)")
     if upload_url:
@@ -323,7 +333,7 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
         "",
         "- `flakytest report --test '<nodeid>'` shows one test's call tree, hot lines, fixtures and queries.",
         (
-            "- After a change, rerun the affected tests with `flakytest pytest <tests>`, then "
+            f"- After a change, rerun the affected tests with `{RERUN[profile['run'].get('runner', 'pytest')]}`, then "
             "`flakytest compare` to check the speed-up and that every test still has the same outcome."
         ),
     ]

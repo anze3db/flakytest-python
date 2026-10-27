@@ -1,6 +1,7 @@
 # The flakytest profile format (v1)
 
-`flakytest pytest` writes one JSON document per test session to
+`flakytest pytest` (and `flakytest python` for unittest and Django's test runner) writes one JSON document per
+test session to
 `.flakytest/runs/<run id>/profile.json`. The same document is what the local report renders, what
 `flakytest report` summarises for people and agents, and what is uploaded to flakytest.dev
 (`POST /api/v1/profile`, gzip-compressed, `Authorization: <FLAKYTEST_SECRET_TOKEN>`).
@@ -36,6 +37,14 @@ synchronisation and works the same for both profilers and for pytest-xdist worke
 marker frame are classified by the pytest hooks on their stack (`startup`, `collection`,
 `session_teardown`, `other`).
 
+Under `flakytest python`, unittest's `TestCase.run` (or Django's `SimpleTestCase._setup_and_call`) is the test,
+and its phases are `setup` (Django's `_pre_setup`, `setUp`), `call` (the test method) and `teardown` (`tearDown`,
+cleanups, Django's `_post_teardown`, and the previous class's or module's teardown). Node ids look like pytest's:
+`tests/test_orders.py::TestCheckout::test_list`. `setUpModule` and `setUpClass` (which runs Django's
+`setUpTestData`) are module and class fixtures of those names, timed in the setup of the first test that needs
+them, and Django's test databases are the session fixture `django_db_setup`. Under `manage.py test --parallel`
+each worker (`django-1`, `django-2`, …) profiles its tests like a pytest-xdist worker.
+
 The pytest durations are exact; sample counts only decide how a phase's duration is split. A stack's
 estimated time is `count / samples_in_phase * phase_duration`. Counts are weighted: tachyon samples a test at a
 quarter of the rate once it has 200 samples, and big suites (over 10,000 tests) at 500 Hz unless
@@ -64,6 +73,7 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
     "duration": 84.2,                    // wall time of the pytest session
     "exit_status": "OK",                 // pytest ExitCode name: OK, TESTS_FAILED, INTERRUPTED, …
     "argv": ["tests/", "-x"],
+    "runner": "pytest",                  // "pytest", "unittest" or "django" (manage.py test)
     "flakytest_version": "2026.0b1",
     "python": {"version": "3.15.0", "implementation": "CPython"},
     "platform": {"system": "Linux", "release": "6.8.0", "machine": "x86_64", "cpu_count": 8},
@@ -84,7 +94,7 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       "samples": 81234,                  // samples captured (all processes)
       "error": null                      // why profiling was unavailable, if backend == "none"
     },
-    "workers": 1,                        // pytest-xdist workers (1 without xdist)
+    "workers": 1,                        // pytest-xdist or Django --parallel workers (1 without them)
     "plugins": ["django", "xdist", "cov"],
     // building the profile after the last test (seconds into the session it finished): the slowest process's
     // part (they're built at the same time), then merging them on the controller, writing the files comes on top
@@ -136,7 +146,7 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       "class": "TestCheckout",           // null for module-level tests
       "name": "test_checkout[eur]",
       "outcome": "passed",               // passed, failed, error, skipped, xfailed, xpassed
-      "worker": null,                    // "gw0" … under pytest-xdist
+      "worker": null,                    // "gw0" … under pytest-xdist, "django-1" … under manage.py test --parallel
       "duration": 1.82,
       "phases": {"setup": 1.2, "call": 0.6, "teardown": 0.02},
       "samples": {"setup": 1190, "call": 602, "teardown": 21},

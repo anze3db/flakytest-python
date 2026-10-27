@@ -15,6 +15,7 @@ from typing import Any
 
 from flakytest import cloud, mcp
 from flakytest.__about__ import __version__
+from flakytest.profiling import unittest_support
 from flakytest.profiling.samplers import choose_backend, find_py_spy, tachyon_available
 from flakytest.report import runs, text
 
@@ -26,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["pytest"]:  # everything after it is pytest's, options included
         return cmd_pytest(argv[1:])
+    if argv[:1] in (["python"], ["python3"]):
+        return cmd_python(argv[1:])
     parser = argparse.ArgumentParser(
         prog="flakytest",
         description="See where your test suite spends its time, and what to fix first.",
@@ -38,6 +41,13 @@ def main(argv: list[str] | None = None) -> int:
         help="run pytest with profiling: flakytest pytest [pytest arguments]",
         description="Run pytest with profiling. Every argument goes to pytest, including --flakytest-rate, "
         "--flakytest-backend and --flakytest-output.",
+    )
+    commands.add_parser(
+        "python",
+        help="run unittest or Django tests with profiling: flakytest python -m unittest …, "
+        "flakytest python manage.py test …",
+        description="Run a Python script or module, profiling every unittest test it runs (Django's test runner "
+        "included). --flakytest-rate, --flakytest-backend and --flakytest-output go before the script or -m.",
     )
 
     report = commands.add_parser("report", help="print a run's report (Markdown, for people and agents)")
@@ -88,7 +98,7 @@ def load(ref: str) -> tuple[Path, dict[str, Any]] | None:
     if run_dir is None:
         sys.stderr.write(
             f"No profiling run found for {ref!r} under {runs.runs_dir(root())}.\n"
-            "Run your tests with `flakytest pytest` first.\n"
+            "Run your tests with `flakytest pytest` (or `flakytest python manage.py test`) first.\n"
         )
         return None
     return run_dir, runs.load_profile(run_dir)
@@ -108,6 +118,17 @@ def cmd_pytest(args: list[str]) -> int:
     if os.name == "posix":  # become pytest: its exit code, signals and terminal, with nothing in between
         os.execve(command[0], command, env)  # noqa: S606 (no shell: the arguments are passed as they are)
     return subprocess.call(command, env=env)
+
+
+def cmd_python(args: list[str]) -> int:
+    try:
+        options, kind, target, rest = unittest_support.parse(args)
+    except unittest_support.UsageError as e:
+        sys.stderr.write(f"flakytest python: {e}\n")
+        return 2
+    if kind == "module" and target == "pytest":  # the pytest plugin profiles it, as with `flakytest pytest`
+        return cmd_pytest([*(f"{name}={value}" for name, value in options.items()), *rest])
+    return unittest_support.run(args)
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -180,7 +201,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_list(_: argparse.Namespace) -> int:
     found = runs.list_runs(root())
     if not found:
-        sys.stdout.write("No runs yet. Try `flakytest pytest`.\n")
+        sys.stdout.write("No runs yet. Try `flakytest pytest` or `flakytest python -m unittest`.\n")
         return 0
     latest = runs.resolve_run(root(), "latest")
     for run_dir in found:

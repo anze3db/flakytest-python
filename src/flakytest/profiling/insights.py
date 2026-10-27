@@ -156,6 +156,11 @@ def django(profile: Profile) -> dict[str, Any]:
     return profile.context.get("django") or {}
 
 
+def runner(profile: Profile) -> str:
+    """What ran the tests: pytest, django (manage.py test) or unittest."""
+    return profile.context.get("runner") or "pytest"
+
+
 @rule
 def password_hashing(profile: Profile) -> Iterator[dict[str, Any]]:
     matched = profile.in_category("password_hashing")
@@ -201,7 +206,7 @@ def password_hashing(profile: Profile) -> Iterator[dict[str, Any]]:
 def migrations_time(profile: Profile, seconds: float) -> str:
     """With pytest-xdist every worker migrates its own test database, in parallel: the sum isn't time anyone waits."""
     workers = profile.doc["run"].get("workers") or 1
-    if workers > 1:
+    if workers > 1 and runner(profile) == "pytest":  # Django's --parallel workers clone the migrated database
         return f"{fmt(seconds)} across {workers} pytest-xdist workers (about {fmt(seconds / workers)} each)"
     return f"{fmt(seconds)} per run"
 
@@ -233,7 +238,8 @@ def migrations(profile: Profile) -> Iterator[dict[str, Any]]:
         impact=matched.seconds * 0.9,
         summary=f"Migrations take {migrations_time(profile, matched.seconds)}, before the first test can start.",
         fix=fix,
-        safety="CI should still build the database from scratch (no --reuse-db) so broken migrations are caught.",
+        safety="CI should still build the database from scratch (no --reuse-db or --keepdb) so broken migrations "
+        "are caught.",
         docs="https://pytest-django.readthedocs.io/en/latest/database.html"
         "#reuse-db-reuse-the-testing-database-between-test-runs"
         if pytest.get("pytest_django")
@@ -634,6 +640,7 @@ def imports_in_tests(profile: Profile) -> Iterator[dict[str, Any]]:
         )
     timeline = profile.doc["summary"].get("timeline", {})
     startup = timeline.get("startup", 0) + timeline.get("collection", 0)
+    pytest = runner(profile) == "pytest"
     if startup >= 3 and startup >= profile.wall * 0.1:
         top = profile.doc["summary"].get("imports", {})
         modules = [f"{m['module']} ({fmt(m['seconds'])})" for m in top.get("collection", [])[:5]] + [
@@ -642,17 +649,27 @@ def imports_in_tests(profile: Profile) -> Iterator[dict[str, Any]]:
         yield insight(
             profile,
             "slow-startup",
-            "pytest takes a long time before the first test runs",
+            "pytest takes a long time before the first test runs" if pytest else "Tests take a long time to start",
             category="imports",
             impact=startup * 0.4,
             summary=f"Startup takes {fmt(timeline.get('startup', 0))} and collection "
             f"{fmt(timeline.get('collection', 0))} on every run, even when you only run one test.",
             fix="Set testpaths and norecursedirs (node_modules, .venv, build, docs) so pytest doesn't walk unrelated "
             "directories; move heavy imports out of module level in test files and conftest.py into fixtures; "
-            "check `python -X importtime -m pytest --collect-only -q` for the slowest imports.",
-            docs="https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths",
+            "check `python -X importtime -m pytest --collect-only -q` for the slowest imports."
+            if pytest
+            else "Move heavy imports out of module level in test modules (into setUpClass or the tests that need "
+            "them), and run only the test packages you need; `python -X importtime` shows the slowest imports.",
+            docs="https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths" if pytest else "",
             evidence=modules,
         )
+
+
+GC_FREEZE_WHERE = {
+    "pytest": "In conftest.py, at the end of pytest_sessionstart",
+    "django": "In a DiscoverRunner subclass (TEST_RUNNER), at the end of setup_test_environment()",
+    "unittest": "Before the tests run (in a load_tests hook, or your test script)",
+}
 
 
 @rule
@@ -667,7 +684,7 @@ def garbage_collection(profile: Profile) -> Iterator[dict[str, Any]]:
         category="gc",
         impact=matched.seconds * 0.6,
         summary=f"Garbage collection pauses take {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}).",
-        fix="In conftest.py, call gc.freeze() at the end of pytest_sessionstart (after imports and setup) so "
+        fix=f"{GC_FREEZE_WHERE[runner(profile)]}, call gc.freeze() after imports and setup so "
         "long-lived objects are never scanned again, and raise the first-generation threshold, e.g. "
         "gc.set_threshold(50_000, 50, 100).",
         safety="This trades memory for speed; watch memory use on large suites.",
@@ -832,6 +849,7 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
     if not profile.tests:
         return
     slowest = max(test["duration"] for test in profile.tests)
+    pytest = runner(profile) == "pytest"
     if workers > 1:
         per_worker: defaultdict[str, float] = defaultdict(float)
         for test in profile.tests:
@@ -842,13 +860,16 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
                 yield insight(
                     profile,
                     "xdist-balance",
-                    "pytest-xdist workers finish at very different times",
+                    ("pytest-xdist workers" if pytest else "Workers") + " finish at very different times",
                     category="parallelism",
                     impact=(busiest - least) / 2,
                     summary=f"The busiest worker ran {fmt(busiest)} of tests, the least busy {fmt(least)}.",
                     fix="Use --dist worksteal (pytest-xdist 3.2+) so idle workers take tests from busy ones; if you "
-                    "use --dist loadscope/loadfile, split the biggest classes or modules.",
-                    docs="https://pytest-xdist.readthedocs.io/en/stable/distribution.html",
+                    "use --dist loadscope/loadfile, split the biggest classes or modules."
+                    if pytest
+                    else "Django gives each worker whole test classes, so one slow class keeps a worker busy: split "
+                    "the slowest classes.",
+                    docs="https://pytest-xdist.readthedocs.io/en/stable/distribution.html" if pytest else "",
                 )
         return
     if cpus < 2 or profile.test_time < 20:
@@ -857,8 +878,32 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
     saved = profile.test_time - estimate
     if saved < 10:
         return
-    pytest = profile.context.get("pytest") or {}
-    install = "" if pytest.get("xdist_installed") else "pip install pytest-xdist, then "
+    context = profile.context.get("pytest") or {}
+    install = "" if context.get("xdist_installed") else "pip install pytest-xdist, then "
+    if runner(profile) == "django":
+        with_what = "With manage.py test --parallel"
+        fix = (
+            "Run manage.py test --parallel auto (or only in CI). Django gives each worker its own copy of the test "
+            "database."
+        )
+        order = "Run with --shuffle first to shake out order dependencies."
+        docs = "https://docs.djangoproject.com/en/stable/ref/django-admin/#cmdoption-test-parallel"
+    elif runner(profile) == "unittest":
+        with_what = "With pytest-xdist"
+        fix = (
+            "pytest runs unittest test cases as they are: pip install pytest pytest-xdist, then "
+            "flakytest pytest -n auto."
+        )
+        order = "Run with -p randomly first to shake out order dependencies."
+        docs = "https://docs.pytest.org/en/stable/how-to/unittest.html"
+    else:
+        with_what = "With pytest-xdist"
+        fix = (
+            f"{install}run pytest -n auto (add it to addopts, or only in CI). pytest-django creates a separate "
+            "test database per worker automatically."
+        )
+        order = "Run with -p randomly first to shake out order dependencies."
+        docs = "https://pytest-xdist.readthedocs.io/en/stable/"
     yield insight(
         profile,
         "xdist",
@@ -866,12 +911,11 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
         category="parallelism",
         impact=saved,
         summary=f"Tests run one at a time: {fmt(profile.test_time)} of test time on a {cpus}-CPU machine. "
-        f"With pytest-xdist this could take about {fmt(estimate)}.",
-        fix=f"{install}run pytest -n auto (add it to addopts, or only in CI). pytest-django creates a separate "
-        "test database per worker automatically.",
+        f"{with_what} this could take about {fmt(estimate)}.",
+        fix=fix,
         safety="Tests must not share state: files in fixed paths, ports, a shared database without per-worker names, "
-        "or module globals. Run with -p randomly first to shake out order dependencies.",
-        docs="https://pytest-xdist.readthedocs.io/en/stable/",
+        f"or module globals. {order}",
+        docs=docs,
     )
 
 
@@ -968,6 +1012,7 @@ def async_loops(profile: Profile) -> Iterator[dict[str, Any]]:
     loops = profile.through("event_loops")
     if not worth_it(loops.seconds, profile, 0.5, 0.02):
         return
+    pytest = runner(profile) == "pytest"
     yield insight(
         profile,
         "asyncio-loop-per-test",
@@ -976,9 +1021,15 @@ def async_loops(profile: Profile) -> Iterator[dict[str, Any]]:
         impact=loops.seconds * 0.8,
         summary=f"Creating and closing event loops takes {fmt(loops.seconds)}.",
         fix="With pytest-asyncio 0.24+ set asyncio_default_fixture_loop_scope / loop_scope='session' (or "
-        "@pytest.mark.asyncio(loop_scope='session')) so tests share one loop.",
+        "@pytest.mark.asyncio(loop_scope='session')) so tests share one loop."
+        if pytest
+        else "IsolatedAsyncioTestCase creates a new event loop for every test, by design: make the loop cheaper to "
+        "create (no PYTHONASYNCIODEBUG, a lighter loop_factory), or write these as pytest-asyncio tests that share "
+        "one loop per session.",
         safety="Tests then share loop state: don't leave tasks running between tests.",
-        docs="https://pytest-asyncio.readthedocs.io/en/stable/how-to-guides/run_session_tests_in_same_loop.html",
+        docs="https://pytest-asyncio.readthedocs.io/en/stable/how-to-guides/run_session_tests_in_same_loop.html"
+        if pytest
+        else "https://docs.python.org/3/library/unittest.html#unittest.IsolatedAsyncioTestCase",
         matched=loops,
     )
 

@@ -72,6 +72,19 @@ TIMELINE_HOOKS = {
     "pytest_load_initial_conftests": "startup",
     "pytest_plugin_registered": "startup",
     "main": "startup",
+    # unittest and Django's test runner
+    "discover": "collection",
+    "loadTestsFromName": "collection",
+    "loadTestsFromNames": "collection",
+    "build_suite": "collection",
+    "setup_databases": "database_setup",
+    "teardown_databases": "session_teardown",
+    "runTests": "between_tests",
+    "run_suite": "between_tests",
+    # Django's --parallel workers: multiprocessing's pool loop waits for the next batch of tests in `worker`
+    "_init_worker": "startup",
+    "worker": "between_tests",
+    "_run_subsuite": "between_tests",
 }
 IMPORT_BUCKETS = ("collection", "startup")
 # What the propagation in Tree starts from at a root node
@@ -769,6 +782,17 @@ def _fixtures(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def rerun_command(runner: str, rate: int, nodeids: list[str]) -> str:
+    """The command that reruns some tests at a sampling rate, for the runner the run used."""
+    if runner == "pytest":
+        return f"flakytest pytest --flakytest-rate {rate} {' '.join(nodeids)}"
+    # unittest names tests by module: shop/tests/test_orders.py::TestCheckout::test_list is
+    # shop.tests.test_orders.TestCheckout.test_list
+    names = " ".join(nodeid.replace(".py::", "::").replace("::", ".").replace("/", ".") for nodeid in nodeids)
+    command = "manage.py test" if runner == "django" else "-m unittest"
+    return f"flakytest python --flakytest-rate {rate} {command} {names}"
+
+
 def _warnings(tests: list[dict[str, Any]], run: dict[str, Any], total_samples: int) -> list[dict[str, Any]]:
     profiler = run["profiler"]
     if profiler["backend"] == "none":
@@ -806,13 +830,13 @@ def _warnings(tests: list[dict[str, Any]], run: dict[str, Any], total_samples: i
             parts.append(f"{len(missed)} test{'s' if len(missed) != 1 else ''} got no samples")
         if low:
             parts.append(f"{len(low)} got fewer than {LOW_SAMPLES}")
-        rerun = " ".join(t["nodeid"] for t in affected[:3])
+        rerun = rerun_command(run.get("runner") or "pytest", recommended, [t["nodeid"] for t in affected[:3]])
         warnings.append(
             {
                 "code": "undersampled",
                 "message": f"{' and '.join(parts)} at {rate} Hz ({_seconds(hidden_time)} of test time), so their "
                 f"breakdowns are missing or rough. For detail on the ones you care about, rerun just them at a "
-                f"higher rate, e.g. flakytest pytest --flakytest-rate {recommended} {rerun}",
+                f"higher rate, e.g. {rerun}",
                 "tests": [t["nodeid"] for t in affected][:50],
                 "recommended_rate": recommended,
             }

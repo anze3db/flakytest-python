@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from flakytest.profiling.analysis import build_profile
+from flakytest.profiling.analysis import build_profile, rerun_command
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
 SLOW = "tests/test_orders.py::TestOrders::test_checkout"
@@ -112,3 +112,18 @@ def test_sample_in_the_marker_frame_itself(tmp_path):
     test = doc["tests"][0]
     assert test["samples"]["call"] == 10
     assert all(node >= 0 for node, _ in test["stacks"]["call"])
+
+
+def test_rerun_command():
+    nodeids = ["shop/tests/test_orders.py::TestCheckout::test_list", "tests.py::TestA::test_a"]
+    assert rerun_command("pytest", 5000, nodeids[:1]) == (
+        "flakytest pytest --flakytest-rate 5000 shop/tests/test_orders.py::TestCheckout::test_list"
+    )
+    assert rerun_command("django", 5000, nodeids) == (
+        "flakytest python --flakytest-rate 5000 manage.py test shop.tests.test_orders.TestCheckout.test_list "
+        "tests.TestA.test_a"
+    )
+    assert (
+        rerun_command("unittest", 200, nodeids[1:])
+        == "flakytest python --flakytest-rate 200 -m unittest tests.TestA.test_a"
+    )

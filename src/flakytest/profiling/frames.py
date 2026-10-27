@@ -10,7 +10,13 @@ from pathlib import Path
 
 PACKAGE_DIRS = ("site-packages", "dist-packages")
 FRAMEWORK_PACKAGES = {"_pytest", "pytest", "pluggy", "py", "xdist", "execnet", "flakytest", "pytest_asyncio"}
-FRAMEWORK_STDLIB = ("unittest/case.py", "unittest/suite.py", "unittest/main.py", "unittest/runner.py")
+FRAMEWORK_STDLIB = (
+    "unittest/case.py",
+    "unittest/async_case.py",
+    "unittest/suite.py",
+    "unittest/main.py",
+    "unittest/runner.py",
+)
 
 # Frames that only wrap the real work: classified as "framework" so segments and call trees skip them
 TRANSPARENT = {

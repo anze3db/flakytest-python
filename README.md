@@ -3,9 +3,10 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/flakytest.svg)](https://pypi.org/project/flakytest)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/flakytest.svg)](https://pypi.org/project/flakytest)
 
-**See where your pytest suite spends its time, why, and what to fix first.**
+**See where your test suite spends its time, why, and what to fix first.**
 
-Put `flakytest` in front of your pytest command. It runs your tests under a sampling profiler and tells you, for
+Put `flakytest` in front of your test command: pytest, unittest or Django's `manage.py test`. It runs your tests
+under a sampling profiler and tells you, for
 every test, class and file, how much time goes to setup, the test itself and teardown, and inside those to the
 database, password hashing, network calls, sleeps, fixtures, factories, imports… down to the line of your code that
 causes it. Then it ranks what to fix, using the perf tricks for pytest, Django and SQLAlchemy that usually take
@@ -60,6 +61,23 @@ python -m flakytest pytest              # the same, without the console script
 ```
 
 Plain `pytest` is untouched: flakytest only does something when you run your tests through it.
+
+### unittest and Django's test runner
+
+No pytest? Put `flakytest` in front of `python`:
+
+```console
+flakytest python -m unittest                        # unittest discovery
+flakytest python -m unittest tests.test_orders -v   # every argument goes to unittest
+flakytest python manage.py test                     # Django's test runner
+flakytest python manage.py test --parallel auto     # each worker is profiled
+flakytest python run_tests.py                       # any script that runs unittest tests
+```
+
+You get the same report. Tests are named like pytest's (`shop/tests/test_orders.py::TestCheckout::test_list`),
+`setUp`, Django's per-test transaction and the test method are the setup and call phases, and `setUpModule`,
+`setUpClass` (with Django's `setUpTestData`) and the test databases (`django_db_setup`) are fixtures that the
+tests share. The suggestions use your runner's options, such as `--keepdb` and `--parallel`.
 
 Every run writes `.flakytest/runs/<run id>/` with:
 
@@ -117,7 +135,7 @@ it affects, and how to make the change without making the tests less trustworthy
 | freezegun, mock autospec | time-machine, patch once per class |
 | Heavy imports, slow collection | `testpaths`, `norecursedirs`, imports out of module level |
 | GC pauses | `gc.freeze()` after startup, higher thresholds |
-| Serial suites on multi-core machines | `pytest -n auto`, `--dist worksteal` |
+| Serial suites on multi-core machines | `pytest -n auto`, `--dist worksteal`, `manage.py test --parallel` |
 | pytest-cov's default tracer | `COVERAGE_CORE=sysmon` |
 
 ## With coding agents
@@ -145,6 +163,7 @@ claude mcp add flakytest -- flakytest mcp
 ## Options
 
 These are pytest options, so they go with the rest: `flakytest pytest --flakytest-rate 5000 tests/test_api.py`.
+With `flakytest python` they go before the script or `-m`: `flakytest python --flakytest-rate 5000 manage.py test`.
 
 | Option | Environment | Default |
 |---|---|---|
@@ -159,17 +178,17 @@ need a high rate; a long test is sampled at a quarter of the rate once it has 20
 
 ## How it works
 
-pytest runs every test phase from `CallInfo.from_call`. flakytest wraps it so each phase runs inside a
-tiny generated function named after the test and phase (`__flakytest_call_1f3a9c0d2b4e__`). A sampling
-profiler attached to the pytest process (from a separate process, at a lower priority than the tests)
+pytest runs every test phase from `CallInfo.from_call`. flakytest wraps it (and under `flakytest python`
+unittest's `setUp`, test method and `tearDown`, and Django's `_pre_setup` and `_post_teardown`) so each phase
+runs inside a tiny generated function named after the test and phase (`__flakytest_call_1f3a9c0d2b4e__`). A
+sampling profiler attached to the test process (from a separate process, at a lower priority than the tests)
 captures that frame in every stack it samples, which attributes each sample to a test and phase exactly,
-with no clock synchronisation, for tachyon and py-spy alike, and per pytest-xdist worker. pytest's own
-durations stay the source of truth; samples only decide how a phase's time is split. With tachyon, other
-threads are sampled while the main thread waits, so work in a thread pool shows up as that work, not as
-"waiting".
+with no clock synchronisation, for tachyon and py-spy alike, and per worker. The measured durations stay the
+source of truth; samples only decide how a phase's time is split. With tachyon, other threads are sampled while
+the main thread waits, so work in a thread pool shows up as that work, not as "waiting".
 
-Each test process builds its part of the profile when it finishes (pytest-xdist workers at the same time) and
-the controller merges them. Every worker records its tests as they finish, so when one crashes the report
+Each test process builds its part of the profile when it finishes (pytest-xdist and Django workers at the same
+time) and the controller merges them. Every worker records its tests as they finish, so when one crashes the report
 says so and keeps them (or takes them from pytest's reports).
 
 Fixture setup times are measured exactly with a `pytest_fixture_setup` wrapper, and Django
@@ -191,10 +210,10 @@ with `--network host` where your Docker supports it. `flakytest doctor` checks y
 ## Optional: flakytest.dev
 
 Everything above works locally and needs no account. [flakytest.dev](https://flakytest.dev) is an optional
-service on top: set `FLAKYTEST_SECRET_TOKEN` (from a project there) and `flakytest pytest` uploads each run's
-profile, from developer machines and CI alike, so you can compare environments and see trends over time. The
-token also turns on flaky test tracking: failures are recorded per environment, and tests muted on flakytest.dev
-don't fail your build.
+service on top: set `FLAKYTEST_SECRET_TOKEN` (from a project there) and `flakytest pytest` (or `flakytest
+python`) uploads each run's profile, from developer machines and CI alike, so you can compare environments and see
+trends over time. With pytest the token also turns on flaky test tracking: failures are recorded per environment,
+and tests muted on flakytest.dev don't fail your build.
 
 ```console
 export FLAKYTEST_SECRET_TOKEN=****************************

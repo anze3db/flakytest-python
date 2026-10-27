@@ -2,7 +2,7 @@
 name = "flakytest"
 # CalVer: YYYY.0bN = the Nth beta of YYYY (2026.0b0, 2026.0b1, ...). Bumped by scripts/release.py.
 version = "2026.0b1"
-description = 'Profile your pytest suite: see where its time goes, why, and what to fix first.'
+description = 'Profile your test suite (pytest, unittest, Django): see where its time goes, why, and what to fix first.'
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -11,6 +11,7 @@ keywords = [
   "test",
   "flaky",
   "pytest",
+  "unittest",
   "profiling",
   "performance",
   "django",
@@ -30,6 +31,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
   "Intended Audience :: Developers",
   "Natural Language :: English",
+  "Framework :: Django",
   "Framework :: Pytest",
 ]
 dependencies = [
