@@ -121,7 +121,7 @@ def test_queries():
 
 def pytest_unconfigure(config):
     plugin = config.pluginmanager.get_plugin("flakytest-profiler")
-    print("DJANGO-DEBUG", plugin._context()["django"]["debug"])
+    print("DJANGO-DEBUG", plugin.session.full_context()["django"]["debug"])
 """
     )
     result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none", "-s")
@@ -277,7 +277,7 @@ def test_sleep(i):
     )
     result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none", "-n", "2")
     result.assert_outcomes(passed=8)
-    result.stdout.fnmatch_lines(["*pytest-xdist workers crashed: gw1*"])
+    result.stdout.fnmatch_lines(["*Workers crashed: gw1*"])
     _, profile = latest_profile(pytester)
     warning = next(w for w in profile["warnings"] if w["code"] == "missing_workers")
     assert warning["workers"] == ["gw1"]
