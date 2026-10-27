@@ -1,5 +1,6 @@
 import io
 import json
+import sys
 
 import pytest
 
@@ -119,3 +120,49 @@ def test_terminal_summary_compares_with_previous_run(project):
     line = text.versus(old, new)
     assert line.startswith("vs previous run (20261001-000000-aaaaaa): 2.00s → 500ms (-1.50s, -75%)")
     assert "1 new" in line
+
+
+def test_flakytest_pytest_loads_the_plugin_for_pytest_and_its_workers(monkeypatch):
+    monkeypatch.setenv("PYTEST_PLUGINS", "myproject.plugin")
+    command, env = cli.pytest_command(["-x", "--flakytest-rate", "5000", "tests/"])
+    assert command[1:] == ["-m", "pytest", "-x", "--flakytest-rate", "5000", "tests/"]
+    assert env["PYTEST_PLUGINS"] == "myproject.plugin,flakytest.hook"
+    monkeypatch.setenv("PYTEST_PLUGINS", "flakytest.hook")
+    assert cli.pytest_command([])[1]["PYTEST_PLUGINS"] == "flakytest.hook"
+
+
+def test_there_is_no_run_command():
+    with pytest.raises(SystemExit):
+        cli.main(["run"])
+
+
+SUITE = """
+def test_passes():
+    pass
+
+def test_fails():
+    assert False
+"""
+
+
+def run_flakytest_pytest(pytester, *args):
+    pytester.makepyfile(test_suite=SUITE)
+    return pytester.run(sys.executable, "-m", "flakytest", "pytest", "-p", "no:cacheprovider", *args)
+
+
+def test_flakytest_pytest_profiles_the_run(pytester):
+    result = run_flakytest_pytest(pytester, "--flakytest-backend", "none")
+    assert result.ret == 1  # pytest's exit status, untouched
+    result.stdout.fnmatch_lines(["*flakytest profile*", "Report: *index.html", "*1 failed, 1 passed*"])
+    run_dir = runs.resolve_run(pytester.path, "latest")
+    assert {t["outcome"] for t in runs.load_profile(run_dir)["tests"]} == {"passed", "failed"}
+
+
+def test_flakytest_pytest_with_xdist_workers(pytester):
+    pytest.importorskip("xdist")
+    result = run_flakytest_pytest(pytester, "--flakytest-backend", "none", "-n", "2")
+    assert result.ret == 1
+    profile = runs.load_profile(runs.resolve_run(pytester.path, "latest"))
+    assert profile["run"]["workers"] == 2
+    assert {t["worker"] for t in profile["tests"]} <= {"gw0", "gw1"}
+    assert len(profile["tests"]) == 2

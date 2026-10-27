@@ -70,9 +70,11 @@ def write_suite(root: Path, tests: int) -> None:
 
 
 def run(root: Path, args: list[str]) -> float:
+    """Seconds a pytest run took. args start with "pytest" (plain pytest) or "flakytest" (flakytest pytest)."""
+    runner = ["-m", "pytest"] if args[0] == "pytest" else ["-m", "flakytest", "pytest"]
     started = time.perf_counter()
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *args],
+        [sys.executable, *runner, "-q", "-p", "no:cacheprovider", *args[1:]],
         cwd=root,
         capture_output=True,
         text=True,
@@ -109,17 +111,17 @@ def main() -> int:
     sampled = choose_backend("auto")[0] != "none"
     xdist = ["-n", str(args.workers)] if args.workers else []
     variants = {
-        "baseline": ["-p", "no:flakytest", *xdist],
-        "exact": ["--flakytest-profile", "--flakytest-backend", "none", *xdist],
+        "baseline": ["pytest", *xdist],
+        "exact": ["flakytest", "--flakytest-backend", "none", *xdist],
     }
     if sampled:
-        variants["sampled"] = ["--flakytest-profile", *xdist]
+        variants["sampled"] = ["flakytest", *xdist]
     times: dict[str, list[float]] = {name: [] for name in variants}
     post: list[tuple[float, float, dict]] = []
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         write_suite(root, args.tests)
-        run(root, ["--collect-only", *variants["baseline"]])  # warm up imports and the filesystem cache
+        run(root, [*variants["baseline"], "--collect-only"])  # warm up imports and the filesystem cache
         for round_ in range(args.rounds):
             for name, extra in variants.items():
                 times[name].append(run(root, extra))

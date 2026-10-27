@@ -68,14 +68,14 @@ class Tools:
     def profile(self, ref: str | None) -> dict[str, Any]:
         run_dir = runs.resolve_run(self.root, ref or "latest")
         if run_dir is None:
-            msg = f"No profiling run {ref or 'latest'!r}. Run the tests with `flakytest run` first."
+            msg = f"No profiling run {ref or 'latest'!r}. Run the tests with `flakytest pytest` first."
             raise LookupError(msg)
         return runs.load_profile(run_dir)
 
     def list_runs(self) -> str:
         found = runs.list_runs(self.root)
         if not found:
-            return "No runs yet. Run the tests with `flakytest run` (or `pytest --flakytest-profile`)."
+            return "No runs yet. Run the tests with `flakytest pytest`."
         return "\n".join(f"{p.name}: {text.headline(runs.load_profile(p))}" for p in found)
 
     def get_report(self, run: str | None = None, top: int = 15) -> str:

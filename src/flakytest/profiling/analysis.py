@@ -812,7 +812,7 @@ def _warnings(tests: list[dict[str, Any]], run: dict[str, Any], total_samples: i
                 "code": "undersampled",
                 "message": f"{' and '.join(parts)} at {rate} Hz ({_seconds(hidden_time)} of test time), so their "
                 f"breakdowns are missing or rough. For detail on the ones you care about, rerun just them at a "
-                f"higher rate, e.g. flakytest run --rate {recommended} -- {rerun}",
+                f"higher rate, e.g. flakytest pytest --flakytest-rate {recommended} {rerun}",
                 "tests": [t["nodeid"] for t in affected][:50],
                 "recommended_rate": recommended,
             }

@@ -1,4 +1,5 @@
-"""The `flakytest` command: run tests under the profiler and look at the results."""
+"""The `flakytest` command: `flakytest pytest …` runs pytest with profiling, the other commands look at the
+results."""
 
 import argparse
 import functools
@@ -14,13 +15,17 @@ from typing import Any
 
 from flakytest import cloud, mcp
 from flakytest.__about__ import __version__
-from flakytest.profiling.samplers import BACKENDS, choose_backend, find_py_spy, tachyon_available
+from flakytest.profiling.samplers import choose_backend, find_py_spy, tachyon_available
 from flakytest.report import runs, text
 
 DEFAULT_PORT = 8765
+PLUGIN = "flakytest.hook"
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["pytest"]:  # everything after it is pytest's, options included
+        return cmd_pytest(argv[1:])
     parser = argparse.ArgumentParser(
         prog="flakytest",
         description="See where your test suite spends its time, and what to fix first.",
@@ -28,13 +33,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"flakytest {__version__}")
     commands = parser.add_subparsers(dest="command", metavar="<command>")
 
-    run = commands.add_parser("run", help="run pytest with profiling, then show the report")
-    run.add_argument("--rate", type=int, help="samples per second (default 1000 tachyon / 500 py-spy)")
-    run.add_argument("--backend", choices=BACKENDS, default="auto")
-    open_group = run.add_mutually_exclusive_group()
-    open_group.add_argument("--open", dest="open", action="store_true", default=None, help="open the report")
-    open_group.add_argument("--no-open", dest="open", action="store_false", help="don't open the report")
-    run.add_argument("pytest_args", nargs=argparse.REMAINDER, help="arguments for pytest (after --)")
+    commands.add_parser(
+        "pytest",
+        help="run pytest with profiling: flakytest pytest [pytest arguments]",
+        description="Run pytest with profiling. Every argument goes to pytest, including --flakytest-rate, "
+        "--flakytest-backend and --flakytest-output.",
+    )
 
     report = commands.add_parser("report", help="print a run's report (Markdown, for people and agents)")
     report.add_argument("run", nargs="?", default="latest", help="run id, path, latest (default) or previous")
@@ -61,7 +65,6 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     handlers = {
-        "run": cmd_run,
         "report": cmd_report,
         "compare": cmd_compare,
         "serve": cmd_serve,
@@ -85,28 +88,26 @@ def load(ref: str) -> tuple[Path, dict[str, Any]] | None:
     if run_dir is None:
         sys.stderr.write(
             f"No profiling run found for {ref!r} under {runs.runs_dir(root())}.\n"
-            "Run your tests with `flakytest run` (or `pytest --flakytest-profile`) first.\n"
+            "Run your tests with `flakytest pytest` first.\n"
         )
         return None
     return run_dir, runs.load_profile(run_dir)
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    pytest_args = args.pytest_args[1:] if args.pytest_args[:1] == ["--"] else args.pytest_args
-    command = [sys.executable, "-m", "pytest", "--flakytest-profile", f"--flakytest-backend={args.backend}"]
-    if args.rate:
-        command.append(f"--flakytest-rate={args.rate}")
-    command += pytest_args
-    before = {p.name for p in runs.list_runs(root())}
-    exit_code = subprocess.call(command)
-    new_runs = [p for p in runs.list_runs(root()) if p.name not in before]
-    if not new_runs:
-        return exit_code
-    report = new_runs[-1] / "index.html"
-    interactive = sys.stdout.isatty() and not os.environ.get("CI")
-    if args.open or (args.open is None and interactive):
-        webbrowser.open(report.resolve().as_uri())
-    return exit_code
+def pytest_command(args: list[str]) -> tuple[list[str], dict[str, str]]:
+    """The command line and environment that run pytest with flakytest's plugin loaded. PYTEST_PLUGINS rather than
+    -p: pytest-xdist workers inherit the environment, not the command line."""
+    env = dict(os.environ)
+    plugins = [p for p in env.get("PYTEST_PLUGINS", "").split(",") if p.strip()]
+    env["PYTEST_PLUGINS"] = ",".join([*plugins, PLUGIN] if PLUGIN not in plugins else plugins)
+    return [sys.executable, "-m", "pytest", *args], env
+
+
+def cmd_pytest(args: list[str]) -> int:
+    command, env = pytest_command(args)
+    if os.name == "posix":  # become pytest: its exit code, signals and terminal, with nothing in between
+        os.execve(command[0], command, env)  # noqa: S606 (no shell: the arguments are passed as they are)
+    return subprocess.call(command, env=env)
 
 
 def cmd_report(args: argparse.Namespace) -> int:
@@ -179,7 +180,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
 def cmd_list(_: argparse.Namespace) -> int:
     found = runs.list_runs(root())
     if not found:
-        sys.stdout.write("No runs yet. Try `flakytest run`.\n")
+        sys.stdout.write("No runs yet. Try `flakytest pytest`.\n")
         return 0
     latest = runs.resolve_run(root(), "latest")
     for run_dir in found:
@@ -254,7 +255,7 @@ def cmd_doctor(_: argparse.Namespace) -> int:
             lines.append(f"ptrace_scope={value}: {note.get(value, 'unknown')}")
     elif sys.platform == "darwin":
         lines.append(
-            "macOS: sampling profilers need root, run `sudo -E flakytest run` if attaching fails, or run the tests "
+            "macOS: sampling profilers need root, run `sudo -E flakytest pytest` if attaching fails, or run the tests "
             "in a Linux container started with --cap-add SYS_PTRACE (which also measures memory per test exactly)"
         )
     lines.append(f"Runs directory: {runs.runs_dir(root())}")

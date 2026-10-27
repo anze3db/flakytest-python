@@ -9,6 +9,7 @@ import pytest
 from flakytest.profiling.memory import MB
 from flakytest.profiling.samplers import choose_backend, tachyon_available
 from flakytest.report.text import markdown_report, memory_hogs
+from tests.helpers import PROFILE
 from tests.test_plugin import latest_profile
 
 SAMPLER = choose_backend("auto")[0] != "none"
@@ -94,7 +95,7 @@ def test_view():
     assert Client().get("/").status_code == 200
 """
     )
-    pytester.runpytest_subprocess("--flakytest-profile").assert_outcomes(passed=1)
+    pytester.runpytest_subprocess(*PROFILE).assert_outcomes(passed=1)
     _, profile = latest_profile(pytester)
     test = by_name(profile)["test_view"]
     assert test["categories"].get("app_code", 0) >= 0.4, test["categories"]
@@ -123,7 +124,7 @@ def pytest_unconfigure(config):
     print("DJANGO-DEBUG", plugin._context()["django"]["debug"])
 """
     )
-    result = pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-backend", "none", "-s")
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none", "-s")
     result.assert_outcomes(passed=1)
     result.stdout.fnmatch_lines(["DJANGO-DEBUG False"])
 
@@ -138,7 +139,7 @@ def test_first():
     ContentType.objects.count()
 """
     )
-    pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-backend", "none").assert_outcomes(passed=1)
+    pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none").assert_outcomes(passed=1)
     _, profile = latest_profile(pytester)
     test = by_name(profile)["test_first"]
     assert test["db"]["queries"] == 1
@@ -167,7 +168,7 @@ class TestCommitted(TransactionTestCase):
             ContentType.objects.create(app_label="b", model=f"m{i}")
 """
     )
-    pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-backend", "none").assert_outcomes(passed=2)
+    pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none").assert_outcomes(passed=2)
     _, profile = latest_profile(pytester)
     tests = {t["class"]: t for t in profile["tests"]}
     rolled_back, committed = tests["TestRolledBack"]["db"], tests["TestCommitted"]["db"]
@@ -206,7 +207,7 @@ def test_third():
     pass
 """
     )
-    result = pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-backend", "none")
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none")
     result.assert_outcomes(passed=3)
     result.stdout.fnmatch_lines(["Slowest tests:", "*test_suite.py::test_second*", "*one-off: first slow_start call*"])
     _, profile = latest_profile(pytester)
@@ -242,7 +243,7 @@ def test_other():
     pass
 """
     )
-    pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-backend", "none").assert_outcomes(passed=2)
+    pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none").assert_outcomes(passed=2)
     _, profile = latest_profile(pytester)
     small = by_name(profile)["test_small"]
     assert small["memory"]["peak_increase"] < 20 * MB, small["memory"]
@@ -274,7 +275,7 @@ def test_sleep(i):
     time.sleep(0.02)
 """
     )
-    result = pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-backend", "none", "-n", "2")
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none", "-n", "2")
     result.assert_outcomes(passed=8)
     result.stdout.fnmatch_lines(["*pytest-xdist workers crashed: gw1*"])
     _, profile = latest_profile(pytester)
@@ -323,7 +324,7 @@ def test_socket():
     assert sock.makefile("rb").readline() == b"hello\\n"
 """
     )
-    pytester.runpytest_subprocess("--flakytest-profile").assert_outcomes(passed=2)
+    pytester.runpytest_subprocess(*PROFILE).assert_outcomes(passed=2)
     _, profile = latest_profile(pytester)
     tests = by_name(profile)
     # Each test runs for a second, so even a profiler that samples far below the requested rate (py-spy on a busy
@@ -362,7 +363,7 @@ def test_pool():
         list(pool.map(scan_zone, range(12)))
 """
     )
-    pytester.runpytest_subprocess("--flakytest-profile").assert_outcomes(passed=2)
+    pytester.runpytest_subprocess(*PROFILE).assert_outcomes(passed=2)
     _, profile = latest_profile(pytester)
     tests = by_name(profile)
     gc_test = tests["test_gc"]["categories"]

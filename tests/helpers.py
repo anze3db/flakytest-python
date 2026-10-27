@@ -6,6 +6,8 @@ from pathlib import Path
 from flakytest.profiling.fixtures import FixtureStats
 from flakytest.profiling.markers import MARKER_FILENAME, marker_key, marker_name
 
+# What `flakytest pytest` adds to pytest: the plugin
+PROFILE = ("-p", "flakytest.hook")
 FROM_CALL = ("/venv/lib/python3.15/site-packages/_pytest/runner.py", "CallInfo.from_call", 341)
 ROOT_FRAMES = (
     ("/venv/bin/pytest", "<module>", 8),

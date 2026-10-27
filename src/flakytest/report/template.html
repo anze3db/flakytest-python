@@ -852,7 +852,7 @@ function markdownFor() {
     });
     lines.push("");
   }
-  lines.push("Verify a change with `flakytest run -- <tests>` and `flakytest compare` (it flags tests whose outcome changed or that stopped running).");
+  lines.push("Verify a change with `flakytest pytest <tests>` and `flakytest compare` (it flags tests whose outcome changed or that stopped running).");
   return lines.join("\n");
 }
 

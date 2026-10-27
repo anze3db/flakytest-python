@@ -3,6 +3,7 @@ import json
 import pytest
 
 from flakytest.profiling.samplers import choose_backend
+from tests.helpers import PROFILE
 
 SUITE = """
 import time
@@ -38,7 +39,7 @@ def latest_profile(pytester):
 
 def test_profile_without_sampler(pytester):
     pytester.makepyfile(test_suite=SUITE)
-    result = pytester.runpytest("--flakytest-profile", "--flakytest-backend", "none")
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none")
     result.assert_outcomes(passed=1, failed=1, skipped=1, xfailed=1)
     result.stdout.fnmatch_lines(["*flakytest profile*", "*4 tests in*", "Report: *index.html"])
 
@@ -69,7 +70,8 @@ def test_profile_without_sampler(pytester):
     ]
 
 
-def test_not_profiling_by_default(pytester):
+def test_plain_pytest_leaves_tests_alone(pytester):
+    """Without `flakytest pytest` nothing of flakytest runs, even when it is installed."""
     pytester.makepyfile(test_suite=SUITE)
     result = pytester.runpytest()
     result.assert_outcomes(passed=1, failed=1, skipped=1, xfailed=1)
@@ -80,7 +82,7 @@ def test_not_profiling_by_default(pytester):
 @pytest.mark.skipif(choose_backend("auto")[0] == "none", reason="no sampling profiler available")
 def test_profile_with_sampler(pytester):
     pytester.makepyfile(test_suite=SUITE)
-    result = pytester.runpytest_subprocess("--flakytest-profile", "--flakytest-rate", "500")
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-rate", "500")
     result.assert_outcomes(passed=1, failed=1, skipped=1, xfailed=1)
     _, profile = latest_profile(pytester)
     # py-spy can sample well below the requested rate on a busy VM: ask for a few samples, and for shares

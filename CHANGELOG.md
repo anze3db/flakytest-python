@@ -11,6 +11,11 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+- **Breaking:** run your tests with `flakytest pytest [pytest arguments]`, which always profiles. Plain `pytest` no
+  longer loads flakytest (the pytest plugin entry point is gone), and `flakytest run`, `--flakytest-profile` and
+  `FLAKYTEST_PROFILE` are removed. Flaky test tracking with `FLAKYTEST_SECRET_TOKEN` also needs `flakytest pytest`
+  now, so update your CI command. `--flakytest-rate`, `--flakytest-backend` and `--flakytest-output` still work, as
+  pytest options.
 - More accurate reports, from running 2026.0b1 on a 94,000-test Django suite:
   - Code that wraps other work (WhiteNoise and other middleware, freezegun, Celery's eager tasks, the debug
     toolbar, Hypothesis) only counts its own work, not everything under it.

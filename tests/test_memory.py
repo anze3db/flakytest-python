@@ -6,6 +6,7 @@ import pytest
 from flakytest.profiling import memory
 from flakytest.profiling.memory import MB, MemoryMeter, growth_warning, summarize
 from flakytest.report.text import markdown_report, memory_line
+from tests.helpers import PROFILE
 from tests.test_plugin import latest_profile
 
 LINUX = sys.platform.startswith("linux") and os.path.exists(memory.STATUS)
@@ -119,7 +120,7 @@ def test_small():
 @pytest.mark.skipif(not LINUX, reason="exact per-test peaks need Linux")
 def test_profile_records_memory(pytester):
     pytester.makepyfile(test_suite=SUITE)
-    result = pytester.runpytest("--flakytest-profile", "--flakytest-backend", "none")
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none")
     result.assert_outcomes(passed=3)
     result.stdout.fnmatch_lines(["Memory: peak * · most: test_suite.py::test_big needed * MB"])
     _, profile = latest_profile(pytester)

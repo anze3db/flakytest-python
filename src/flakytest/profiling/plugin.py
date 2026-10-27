@@ -36,7 +36,6 @@ from flakytest.profiling.memory import MemoryMeter
 from flakytest.profiling.samplers import BACKENDS, DEFAULT_RATES, Sampler, choose_backend
 from flakytest.report import html, runs, text
 
-TRUTHY = ("1", "true", "yes", "on")
 WORKER_WAIT = 30.0
 SAMPLER_WAIT = 30.0
 # Big suites are sampled less often (unless --flakytest-rate says otherwise): suite-wide insights don't need more,
@@ -57,13 +56,6 @@ WRAPPER = (
 def add_options(parser: pytest.Parser) -> None:
     group = parser.getgroup("flakytest", "flakytest profiling")
     group.addoption(
-        "--flakytest-profile",
-        action="store_true",
-        default=os.environ.get("FLAKYTEST_PROFILE", "").lower() in TRUTHY,
-        help="Profile every test with a sampling profiler and write a report to .flakytest/ "
-        "(also enabled by FLAKYTEST_PROFILE=1).",
-    )
-    group.addoption(
         "--flakytest-rate",
         type=int,
         default=int(os.environ.get("FLAKYTEST_PROFILE_RATE") or 0) or None,
@@ -82,16 +74,6 @@ def add_options(parser: pytest.Parser) -> None:
         default=os.environ.get("FLAKYTEST_PROFILE_DIR"),
         help="Directory for profiling runs (default: <rootdir>/.flakytest/runs).",
     )
-
-
-def profiling_requested(config: pytest.Config) -> bool:
-    namespace = getattr(config, "known_args_namespace", None)
-    if namespace is not None and getattr(namespace, "flakytest_profile", False):
-        return True
-    try:
-        return bool(config.getoption("flakytest_profile"))
-    except ValueError:
-        return False
 
 
 def is_xdist_controller(config: pytest.Config) -> bool:

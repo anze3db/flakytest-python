@@ -323,7 +323,7 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
         "",
         "- `flakytest report --test '<nodeid>'` shows one test's call tree, hot lines, fixtures and queries.",
         (
-            "- After a change, rerun the affected tests with `flakytest run -- <tests>`, then "
+            "- After a change, rerun the affected tests with `flakytest pytest <tests>`, then "
             "`flakytest compare` to check the speed-up and that every test still has the same outcome."
         ),
     ]

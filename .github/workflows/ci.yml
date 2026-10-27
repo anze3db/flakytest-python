@@ -45,13 +45,15 @@ jobs:
         env:
           PY: ${{ matrix.python }}
           PYTEST: ${{ matrix.pytest }}
-          # The plugin reports this run to flakytest.dev, which mutes tests/test_flake.py's failures
+          # flakytest pytest reports this run to flakytest.dev, which mutes tests/test_flake.py's failures
           FLAKYTEST_SECRET_TOKEN: ${{ secrets.FLAKYTEST_SECRET_TOKEN }}
-        # pytest-xdist and Django run the synthetic suites in tests/test_accuracy.py (both need pytest 7+)
+        # pytest-xdist and Django run the synthetic suites in tests/test_accuracy.py (both need pytest 7+).
+        # flakytest pytest reports the run to flakytest.dev; exact timings only, so a sampler of its own doesn't
+        # compete with the samplers the tests start.
         run: |
           extra=()
           if [ "$PYTEST" != 6 ]; then extra=(--with pytest-xdist --with django); fi
-          uv run --python "$PY" --with "pytest~=$PYTEST.0" "${extra[@]}" pytest -q
+          uv run --python "$PY" --with "pytest~=$PYTEST.0" "${extra[@]}" flakytest pytest -q --flakytest-backend none
 
   # flakytest's overhead budget on a generated 5,000-test suite: building the profile after the last test takes at
   # most 10% of the run, and exact mode (no sampling) slows it down by at most 5%
