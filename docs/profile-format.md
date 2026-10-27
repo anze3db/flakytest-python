@@ -1,6 +1,6 @@
 # The flakytest profile format (v1)
 
-`pytest --flakytest-profile` (or `flakytest run`) writes one JSON document per test session to
+`flakytest pytest` writes one JSON document per test session to
 `.flakytest/runs/<run id>/profile.json`. The same document is what the local report renders, what
 `flakytest report` summarises for people and agents, and what is uploaded to flakytest.dev
 (`POST /api/v1/profile`, gzip-compressed, `Authorization: <FLAKYTEST_SECRET_TOKEN>`).

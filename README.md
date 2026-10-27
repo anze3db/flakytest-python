@@ -5,34 +5,38 @@
 
 **See where your pytest suite spends its time, why, and what to fix first.**
 
-flakytest runs your tests under a sampling profiler and tells you, for every test, class and file, how
-much time goes to setup, the test itself and teardown, and inside those to the database, password
-hashing, network calls, sleeps, fixtures, factories, imports… down to the line of your code that
-causes it. Then it ranks what to fix, using the perf tricks for pytest, Django and SQLAlchemy that
-usually take someone an afternoon of profiling to find.
+Put `flakytest` in front of your pytest command. It runs your tests under a sampling profiler and tells you, for
+every test, class and file, how much time goes to setup, the test itself and teardown, and inside those to the
+database, password hashing, network calls, sleeps, fixtures, factories, imports… down to the line of your code that
+causes it. Then it ranks what to fix, using the perf tricks for pytest, Django and SQLAlchemy that usually take
+someone an afternoon of profiling to find.
 
-It works locally, needs no account, and is built to be used by coding agents as much as by people.
-[flakytest.dev](https://flakytest.dev) is optional: it collects the same profiles from every machine and
-CI job, so you can see why CI is slower than your laptop, and it still tracks flaky tests.
-
-**[Documentation](https://flakytest.dev/docs/)**: how profiling works, every command and option, the report,
-the cloud and what it uploads.
+Everything stays on your machine: no account, no upload. The report is a local HTML page, and everything in it is
+also available as Markdown and JSON for coding agents.
 
 ```console
 $ pip install flakytest
-$ flakytest run
+$ flakytest pytest
 ...
 ============================== flakytest profile ===============================
-812 tests in 1.4 min (test time 5.0 min) · local:anze@mbp · Python 3.15.0 · tachyon @ 1000 Hz
-Time goes to: password hashing 41% · database 30% · test code 9% · sleep 6%
+7 tests in 2.35s (test time 2.03s) · local:dev@laptop · Python 3.15.0 · tachyon @ 1000 Hz, 2,049 samples
+Time goes to: password hashing 71% · sleep 20% · DB schema / flush 4% · database 3%
 Slowest tests:
-    3.21s  tests/test_orders.py::TestCheckout::test_checkout  (database 70%, setUp (call) 2.1s, 412 queries)
+    485ms  shop/tests/test_accounts.py::TestLogin::test_profile_page  (password hashing 100%, test body in call 243ms, 22 queries)
+    475ms  shop/tests/test_accounts.py::TestLogin::test_wrong_password  (password hashing 99%, test body in call 239ms, 6 queries)
+    402ms  shop/tests/test_orders.py::test_warehouse_is_notified  (sleep 100%, test body in call 401ms, 2 queries)
+     44ms  shop/tests/test_orders.py::TestCheckout::test_order_list  (database 98%, test body in call 31ms, 265 queries)
 Fix next:
-  1. [high] Use a fast password hasher in tests (~2.0 min per run)
-  2. [high] Create shared test data in setUpTestData instead of setUp (~41s per run)
-  3. [high] Run tests in parallel on all 10 CPUs (~3.9 min per run)
-Report: .flakytest/runs/20261016-210311-8c3f2a/index.html
+  1. [high] Use a fast password hasher in tests (~1.37s per run)
+  2. [high] Create shared test data in setUpTestData instead of setUp (~530ms per run)
+  3. [high] Tests are sleeping (~361ms per run)
+Memory: peak 68 MB · most: shop/tests/test_accounts.py::TestLogin::test_profile_page needed 372 KB
+Report: .flakytest/runs/20261027-224652-0223c7/index.html
+  flakytest serve  ·  flakytest report --format markdown  (for agents)
+============================== 7 passed in 2.11s ===============================
 ```
+
+![The local report: where a run's test time goes, by category, with the session timeline](https://raw.githubusercontent.com/anze3db/flakytest-python/main/docs/images/report-overview.png)
 
 ## Install
 
@@ -46,11 +50,16 @@ either you still get exact durations, fixture times and query counts, just no br
 
 ## Profile your tests
 
+Run pytest the way you always do, with `flakytest` in front:
+
 ```console
-flakytest run                 # runs pytest with profiling and opens the report
-flakytest run -- tests/api -x # anything after -- goes to pytest
-pytest --flakytest-profile    # the same, from pytest itself (or FLAKYTEST_PROFILE=1 pytest)
+flakytest pytest                        # the whole suite
+flakytest pytest tests/api -x           # every argument goes to pytest
+flakytest pytest -n auto                # pytest-xdist works too: each worker is profiled
+python -m flakytest pytest              # the same, without the console script
 ```
+
+Plain `pytest` is untouched: flakytest only does something when you run your tests through it.
 
 Every run writes `.flakytest/runs/<run id>/` with:
 
@@ -58,11 +67,13 @@ Every run writes `.flakytest/runs/<run id>/` with:
   to see where its time goes: setup/call/teardown, time by category, the pieces of work (fixtures,
   `setUp`, the test body, Django's transaction setup…), the hot lines in your code with their source,
   a call tree (pytest internals hidden), hot functions, fixtures, SQL queries and repeated queries
-  (N+1), and the suggestions that apply. `flakytest serve` serves it on localhost.
+  (N+1), memory, and the suggestions that apply. Open it from disk, or with `flakytest serve`.
 * `profile.json` — everything in the report, documented in [docs/profile-format.md](https://github.com/anze3db/flakytest-python/blob/main/docs/profile-format.md).
   `profile.js` is the same data for `index.html`, and `summary.json` is what the next run compares itself with.
 
 `.flakytest/` ignores itself in git.
+
+![One test in the report: where its time goes, its memory, and what to fix, down to the line](https://raw.githubusercontent.com/anze3db/flakytest-python/main/docs/images/report-test.png)
 
 ## Memory
 
@@ -133,16 +144,17 @@ claude mcp add flakytest -- flakytest mcp
 
 ## Options
 
+These are pytest options, so they go with the rest: `flakytest pytest --flakytest-rate 5000 tests/test_api.py`.
+
 | Option | Environment | Default |
 |---|---|---|
-| `--flakytest-profile` | `FLAKYTEST_PROFILE=1` | off |
 | `--flakytest-rate N` | `FLAKYTEST_PROFILE_RATE` | 1000 (tachyon; 500 above 10,000 tests), 500 (py-spy; 100 when pytest-xdist workers use every CPU) |
 | `--flakytest-backend auto\|tachyon\|py-spy\|none` | `FLAKYTEST_PROFILE_BACKEND` | `auto` |
 | `--flakytest-output DIR` | `FLAKYTEST_PROFILE_DIR` | `<rootdir>/.flakytest/runs` |
-| | `FLAKYTEST_ENV` | detected: `ci:github-actions:<job>`, `local:<user>@<host>`, … |
+| | `FLAKYTEST_ENV` | the run's environment name: `local:<user>@<host>`, `ci:github-actions:<job>`, … |
 
 If tests are too short for the sampling rate, the report says so and suggests a rate: rerun the tests you care
-about with it, e.g. `flakytest run --rate 5000 -- tests/test_api.py`. Suite-wide numbers and suggestions don't
+about with it, e.g. `flakytest pytest --flakytest-rate 5000 tests/test_api.py`. Suite-wide numbers and suggestions don't
 need a high rate; a long test is sampled at a quarter of the rate once it has 200 samples.
 
 ## How it works
@@ -166,39 +178,34 @@ Fixture setup times are measured exactly with a `pytest_fixture_setup` wrapper, 
 **Permissions.** Sampling profilers read another process's memory. On Linux flakytest allows its own
 profiler to attach (`prctl(PR_SET_PTRACER)`), which is enough with the default `ptrace_scope=1`
 (including GitHub Actions). In Docker you may need `--cap-add SYS_PTRACE`. On macOS profilers need
-root: `sudo -E flakytest run`, or run the tests in a Linux container, which also gets you exact per-test memory:
+root: `sudo -E flakytest pytest`, or run the tests in a Linux container, which also gets you exact per-test memory:
 
 ```console
 docker run --rm -it --cap-add SYS_PTRACE -v "$PWD":/src -w /src python:3.15 \
-  sh -c "pip install -r requirements.txt flakytest && pytest --flakytest-profile"
+  sh -c "pip install -r requirements.txt flakytest && flakytest pytest"
 ```
 
 (with your project's install step). Tests that use services on your Mac reach them at `host.docker.internal`, or
 with `--network host` where your Docker supports it. `flakytest doctor` checks your setup.
 
-## flakytest.dev
+## Optional: flakytest.dev
 
-Set `FLAKYTEST_SECRET_TOKEN` (create a project on [flakytest.dev](https://flakytest.dev)) and every
-profiled run is uploaded, from developer machines and CI alike, so you can compare environments, see
-trends and regressions, and query it all from agents via flakytest.dev's MCP server. The token also
-turns on flaky test tracking for every run (profiled or not): failures are recorded per environment,
-and muted tests on flakytest.dev don't fail your build.
+Everything above works locally and needs no account. [flakytest.dev](https://flakytest.dev) is an optional
+service on top: set `FLAKYTEST_SECRET_TOKEN` (from a project there) and `flakytest pytest` uploads each run's
+profile, from developer machines and CI alike, so you can compare environments and see trends over time. The
+token also turns on flaky test tracking: failures are recorded per environment, and tests muted on flakytest.dev
+don't fail your build.
 
 ```console
 export FLAKYTEST_SECRET_TOKEN=****************************
-pytest --flakytest-profile
+flakytest pytest
 ```
 
 What's uploaded is `profile.json`: test names, outcomes, durations, file paths relative to the project,
 function names, source lines of the hot spots in your code, normalized SQL of repeated queries, the
 environment name (`local:<user>@<host>` unless you set `FLAKYTEST_ENV`), git branch/commit and changed
-file names. Set `FLAKYTEST_UPLOAD=0` to keep profiles local while still tracking flaky tests.
-
-## Learn more
-
-The [documentation](https://flakytest.dev/docs/) covers everything above in more detail: the report, every
-CLI command, how samples are attributed, the categories and suggestions, CI setup, flaky test
-classification, the cloud's MCP server, uploads and data retention.
+file names. Set `FLAKYTEST_UPLOAD=0` to keep profiles local while still tracking flaky tests. Its
+[documentation](https://flakytest.dev/docs/) covers CI setup, flaky test classification and data retention.
 
 ## License
 
