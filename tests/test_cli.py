@@ -164,5 +164,6 @@ def test_flakytest_pytest_with_xdist_workers(pytester):
     assert result.ret == 1
     profile = runs.load_profile(runs.resolve_run(pytester.path, "latest"))
     assert profile["run"]["workers"] == 2
+    assert profile["run"]["postprocessing"]["tests_finished_at"] > 0  # the controller saw the tests finish
     assert {t["worker"] for t in profile["tests"]} <= {"gw0", "gw1"}
     assert len(profile["tests"]) == 2

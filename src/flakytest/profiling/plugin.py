@@ -11,6 +11,7 @@ import contextlib
 import importlib.util
 import inspect
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -139,7 +140,8 @@ class ProfilerPlugin:
         if report.when not in ("setup", "call", "teardown"):
             return
         session = self.session
-        if session.controller:
+        if session.controller:  # its tests run in the workers: the last report is when they finished
+            session.last_report = time.perf_counter()
             record = session.reports.get(report.nodeid)
             if record is None:
                 file, _, rest = report.nodeid.partition("::")

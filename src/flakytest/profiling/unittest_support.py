@@ -17,6 +17,7 @@ import inspect
 import os
 import runpy
 import sys
+import time
 import traceback
 import unittest
 from collections.abc import Callable
@@ -112,6 +113,8 @@ def run(args: list[str]) -> int:
     finally:
         session.runner = "django" if "django.test.runner" in sys.modules and _django["patched"] else "unittest"
         _end_current(session)
+        if session.last_report == session.started:  # the tests ran in Django's --parallel workers
+            session.last_report = time.perf_counter()
         session.finish("OK" if status == 0 else "TESTS_FAILED", _context())
         lines = session.summary_lines()
         if lines:

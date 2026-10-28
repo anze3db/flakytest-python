@@ -253,6 +253,7 @@ def test_django_parallel(pytester):
     assert result.ret == 0
     profile = latest(pytester)
     assert profile["run"]["workers"] == 2
+    assert profile["run"]["postprocessing"]["tests_finished_at"] > 0
     tests = check_django_run(profile, fails="skipped")
     # Django hands each worker whole classes
     workers = {cls: {t["worker"] for t in tests.values() if t["class"] == cls} for cls in ("TestGroups", "TestOther")}
