@@ -11,6 +11,10 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+## [2026.0b2](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b2) - 2026-10-28
+
+### Highlights
+
 - **Breaking:** run your tests with `flakytest pytest [pytest arguments]`, which always profiles. Plain `pytest` no
   longer loads flakytest (the pytest plugin entry point is gone), and `flakytest run`, `--flakytest-profile` and
   `FLAKYTEST_PROFILE` are removed. Flaky test tracking with `FLAKYTEST_SECRET_TOKEN` also needs `flakytest pytest`
@@ -44,6 +48,34 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
   cost less per test. Big suites (over 10,000 tests) are sampled at 500 Hz, long tests at a quarter of the
   rate, and profilers run at a lower priority than the tests.
 - `scripts/benchmark.py` (`just benchmark`) checks the overhead budget on a generated 5,000-test suite in CI.
+
+### Changes
+
+* Fix the migrations insight's total with xdist workers and its docs link
+* Categorise samples by tier: GC first, context from the root, the rest from the leaf
+* Count raw SQL per test, normalise it once per statement, and time commits
+* Build each process's profile from a streamed stack tree and merge the parts
+* Keep exact mode cheap and check the overhead budget in CI
+* Allow migrate's own content type query in the session setup test
+* Add benchmarks comparing py-spy and tachyon overhead, lost samples and bias
+* Pin the benchmarks to the plugin version they measured
+* Let the sampled tests pass when py-spy samples below its rate
+* Update pre-commit hooks with Dependabot instead of pre-commit.ci
+* Profile with `flakytest pytest`, and leave plain pytest alone
+* Focus the README on profiling locally
+* Move the profiling session out of the pytest plugin
+* Profile unittest and Django tests with `flakytest python`
+* Time post-processing from the last test on the xdist controller and Django's parallel parent
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/flakytest-python/compare/2026.0b1...2026.0b2
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [2026.0b1](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b1) - 2026-10-18
 
