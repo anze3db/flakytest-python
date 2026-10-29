@@ -1,3 +1,7 @@
+from types import SimpleNamespace
+
+import pytest
+
 from flakytest.profiling.markers import MARKER_FILENAME
 from flakytest.profiling.stacks import read_samples
 from tests.helpers import write_tachyon_samples
@@ -49,3 +53,24 @@ def test_tachyon_file_cut_short_by_a_crash(tmp_path):
     samples = read_samples(path)
     assert sum(samples.main.values()) == 3
     assert not samples.complete
+
+
+def test_tachyon_sampler_starts_over_when_its_stacks_pile_up(tmp_path, monkeypatch):
+    tachyon_sampler = pytest.importorskip("flakytest.profiling.tachyon_sampler")  # Python 3.15+
+    monkeypatch.setattr(tachyon_sampler, "FORGET_AFTER", 3)
+    path = tmp_path / "samples-1.jsonl"
+    writer = tachyon_sampler.StackWriter(path)
+    root = ("/venv/bin/pytest", 8, "<module>")  # FrameInfo: filename, line, function
+    expected = []
+    for test in ("a", "b", "c"):
+        marker = (MARKER_FILENAME, 1, f"__flakytest_call_{test}__")
+        for line in (1, 2):
+            leaf = ("/app.py", line, "work")
+            writer.add(SimpleNamespace(thread_id=1, frame_info=[leaf, marker, root]), [], 2)
+            expected.append(((root[0], root[2], 8), (MARKER_FILENAME, marker[2], 1), ("/app.py", "work", line)))
+        writer.flush()
+        assert not writer.trie
+    writer.file.close()
+    samples = read_samples(path)
+    assert paths(samples) == sorted((stack, 2) for stack in expected)
+    assert len(samples.frames) > len(set(samples.frames))  # it forgot the frames it had written

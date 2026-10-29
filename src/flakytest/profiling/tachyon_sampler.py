@@ -5,7 +5,9 @@ SIGINT or SIGTERM stops sampling and writes what's left; so does the target proc
 
 Stacks are stored as a prefix tree as they are sampled, and written every few seconds as one JSON line of what's
 new since the last write, so the sampler never holds (or serialises) the whole run at once, and a crash keeps
-everything up to the last write. Each line is
+everything up to the last write. Every test's stacks are new to the tree (they're below its marker frame), so it
+would grow with the run: once it's big, the sampler forgets it and starts a new one, whose frames and nodes get new
+ids (the reader doesn't mind seeing a frame or stack twice). Each line is
 
     {"frames": [[filename, function, line], ...],     # new frames, ids continue from the previous lines
      "nodes": [[parent node or -1, frame], ...],      # new stack nodes, likewise
@@ -37,6 +39,8 @@ from profiling.sampling.sample import SampleProfiler  # type: ignore[import-not-
 ATTACH_RETRIES = 40
 FLUSH_SECONDS = 5.0
 FLUSH_ENTRIES = 200_000
+# Stack nodes and frames the sampler remembers before it starts over (~25 MB)
+FORGET_AFTER = 100_000
 MARKER_FILENAME = "<flakytest>"  # flakytest.profiling.markers, not imported to keep the sampler lean
 # The control file the plugin writes: test sequence number, then the sampling interval it wants in microseconds
 CONTROL = struct.Struct("<QI")
@@ -58,6 +62,8 @@ class StackWriter:
         self.frame_ids: dict[tuple[str, str, int], int] = {}
         self.by_object: dict[int, tuple[object, int, bool]] = {}  # id(FrameInfo) -> (it, frame id, is a marker)
         self.trie: dict[int, int] = {}
+        self.frame_count = 0
+        self.node_count = 0
         self.new_frames: list[tuple[str, str, int]] = []
         self.new_nodes: list[tuple[int, int]] = []
         self.main: dict[int, int] = {}
@@ -77,7 +83,8 @@ class StackWriter:
         key = (frame[0], frame[2], line or 0)
         frame_id = self.frame_ids.get(key)
         if frame_id is None:
-            frame_id = self.frame_ids[key] = len(self.frame_ids)
+            frame_id = self.frame_ids[key] = self.frame_count
+            self.frame_count += 1
             self.new_frames.append(key)
         marker = frame[0] == MARKER_FILENAME
         self.by_object[id(frame)] = (frame, frame_id, marker)
@@ -102,10 +109,11 @@ class StackWriter:
             frame_id, is_marker = self.frame_id(frames[position])
             if is_marker and marker < 0:
                 marker, marker_at = frame_id, position
-            key = (parent + 1) << 24 | frame_id
+            key = (parent + 1) << 32 | frame_id
             node = trie.get(key)
             if node is None:
-                node = trie[key] = len(trie)
+                node = trie[key] = self.node_count
+                self.node_count += 1
                 self.new_nodes.append((parent, frame_id))
             nodes.append(node)
             parent = node
@@ -144,6 +152,9 @@ class StackWriter:
         self.file.flush()
         self.new_frames, self.new_nodes, self.main, self.threads, self.failed = [], [], {}, {}, 0
         self.flushed_at = time.monotonic()
+        if len(self.trie) + len(self.by_object) > FORGET_AFTER:
+            # The ids written so far stay valid: each thread's next stack can still start from its previous one
+            self.frame_ids, self.by_object, self.trie = {}, {}, {}
 
 
 class Control:
