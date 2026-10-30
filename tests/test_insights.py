@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from flakytest.profiling.analysis import build_profile
+from flakytest.profiling.plugin import _testpaths
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
 SITE = "/venv/lib/python3.15/site-packages"
@@ -206,3 +207,34 @@ def test_durability_insight_from_commits(tmp_path):
     assert insight["impact"] == pytest.approx(6.0)
     assert "1200 commits" in insight["summary"]
     assert "800 writes outside a transaction" in insight["summary"]
+
+
+COLLECT = (("/venv/bin/pytest", "<module>", 8), ("/x/_pytest/main.py", "perform_collect", 1))
+
+
+@pytest.mark.parametrize("testpaths", [None, ["tests"]])
+def test_slow_startup_is_per_process_and_knows_the_settings(tmp_path, testpaths):
+    """8 xdist workers that each collected for 38s took 5.1 minutes together, not 5.1 minutes of the run."""
+    parts = []
+    for worker in range(2):
+        nodeid = f"tests/test_{worker}.py::test_it"
+        stacks = [(COLLECT, 2000), (phase_stack(nodeid, "call"), 1000)]
+        samples = write_tachyon_samples(tmp_path / f"samples-{worker}.json", stacks)
+        parts.append(
+            process([record(nodeid, call=10.0)], samples, sampled_seconds=30.0, pid=worker, worker=f"gw{worker}")
+        )
+    context = {"pytest": {"testpaths": testpaths}}
+    doc = build_profile(run_info(duration=40.0, workers=2), parts, tmp_path, context)
+    assert doc["summary"]["startup_per_process"] == {"startup": 0, "collection": pytest.approx(20.0)}
+    startup = next(i for i in doc["insights"] if i["id"] == "slow-startup")
+    assert (
+        startup["summary"]
+        == "Collection takes 20.0s in each of 2 processes (40.0s together) before the first test runs."
+    )
+    assert ("Set testpaths" in startup["fix"]) == (testpaths is None)
+
+
+def test_the_plugin_records_the_collection_settings(pytester):
+    pytester.makeini("[pytest]\ntestpaths = tests\n")
+    config = pytester.parseconfig()
+    assert _testpaths(config) == ["tests"]

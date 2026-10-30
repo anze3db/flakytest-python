@@ -114,7 +114,10 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
     "test_time": 301.5,                  // sum of all test durations (setup + call + teardown)
     "phases": {"setup": 120.1, "call": 160.0, "teardown": 21.4},
     "categories": {"db": 140.2, "password_hashing": 40.1},   // estimated seconds, see categories below
+    // sampled seconds of every process added up (8 workers that each collect for 10s: collection 80s)
     "timeline": {"startup": 2.1, "collection": 3.4, "tests": 77.9, "between_tests": 0.3, "session_teardown": 0.8},
+    "timeline_processes": 1,             // how many processes the timeline adds up
+    "startup_per_process": {"startup": 2.1, "collection": 3.4},  // the process slowest to get to its tests
     // the modules being imported while pytest starts and collects
     "imports": {"collection": [{"module": "tests/test_api.py", "seconds": 1.2}]},
     // the test processes' memory (bytes, see Memory below); null when it couldn't be measured

@@ -638,29 +638,46 @@ def imports_in_tests(profile: Profile) -> Iterator[dict[str, Any]]:
             "(e.g. stub the heavy dependency).",
             matched=matched,
         )
-    timeline = profile.doc["summary"].get("timeline", {})
-    startup = timeline.get("startup", 0) + timeline.get("collection", 0)
+    summary = profile.doc["summary"]
+    timeline = summary.get("timeline", {})
+    processes = summary.get("timeline_processes", 1)
+    # Processes start and collect in parallel: what one of them takes is what the run waits for
+    each = summary.get("startup_per_process") or {k: timeline.get(k, 0) for k in ("startup", "collection")}
+    startup = each.get("startup", 0) + each.get("collection", 0)
     pytest = runner(profile) == "pytest"
     if startup >= 3 and startup >= profile.wall * 0.1:
-        top = profile.doc["summary"].get("imports", {})
+        top = summary.get("imports", {})
         modules = [f"{m['module']} ({fmt(m['seconds'])})" for m in top.get("collection", [])[:5]] + [
             f"{m['module']} ({fmt(m['seconds'])})" for m in top.get("startup", [])[:3]
         ]
+        together = timeline.get("startup", 0) + timeline.get("collection", 0)
+        where = f" in each of {processes} processes ({fmt(together)} together)" if processes > 1 else ""
+        settings = (profile.context.get("pytest") or {}) if pytest else {}
+        fix = []
+        if pytest and not settings.get("testpaths"):
+            fix.append(
+                "Set testpaths (and norecursedirs: node_modules, .venv, build, docs) so pytest doesn't walk unrelated "
+                "directories."
+            )
+        fix.append(
+            "Move heavy imports out of module level in test files and conftest.py into fixtures; check "
+            "`python -X importtime -m pytest --collect-only -q` for the slowest imports."
+            if pytest
+            else "Move heavy imports out of module level in test modules (into setUpClass or the tests that need "
+            "them), and run only the test packages you need; `python -X importtime` shows the slowest imports."
+        )
+        took = " and ".join(f"{key} takes {fmt(each[key])}" for key in ("startup", "collection") if each.get(key))
         yield insight(
             profile,
             "slow-startup",
             "pytest takes a long time before the first test runs" if pytest else "Tests take a long time to start",
             category="imports",
-            impact=startup * 0.4,
-            summary=f"Startup takes {fmt(timeline.get('startup', 0))} and collection "
-            f"{fmt(timeline.get('collection', 0))} on every run, even when you only run one test.",
-            fix="Set testpaths and norecursedirs (node_modules, .venv, build, docs) so pytest doesn't walk unrelated "
-            "directories; move heavy imports out of module level in test files and conftest.py into fixtures; "
-            "check `python -X importtime -m pytest --collect-only -q` for the slowest imports."
-            if pytest
-            else "Move heavy imports out of module level in test modules (into setUpClass or the tests that need "
-            "them), and run only the test packages you need; `python -X importtime` shows the slowest imports.",
-            docs="https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths" if pytest else "",
+            impact=together * 0.4,
+            summary=f"{took[0].upper()}{took[1:]}{where} before the first test runs.",
+            fix=" ".join(fix),
+            docs="https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths"
+            if pytest and not settings.get("testpaths")
+            else "https://docs.python.org/3/using/cmdline.html#cmdoption-X",
             evidence=modules,
         )
 

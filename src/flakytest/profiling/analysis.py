@@ -663,6 +663,8 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     tests: list[dict[str, Any]] = []
     suite_stacks: defaultdict[tuple[int, str], float] = defaultdict(float)
     timeline: Counter[str] = Counter()
+    # the startup and collection of the process that took longest to get to its tests: processes start in parallel
+    startup: dict[str, float] = {}
     imports: defaultdict[str, Counter[int]] = defaultdict(Counter)
     matched: dict[str, Matched] = defaultdict(Matched)
     total_samples = sample_errors = 0
@@ -708,6 +710,9 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
         for node, category, seconds in part["suite_stacks"]:
             suite_stacks[(node_ids[node], category)] += seconds
         timeline.update(part["timeline"])
+        before_tests = {bucket: part["timeline"].get(bucket, 0.0) for bucket in IMPORT_BUCKETS}
+        if sum(before_tests.values()) > sum(startup.values()):
+            startup = before_tests
         for bucket, modules in part["imports"].items():
             for frame, seconds in modules:
                 imports[bucket][frame_ids[frame]] += seconds
@@ -726,8 +731,12 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     if not timeline_fits:  # the startup and import times would be wrong, and so would insights built on them
         timeline.clear()
         imports.clear()
+        startup = {}
 
     summary = _summary(tests, timeline)
+    summary["timeline_processes"] = max(1, sampled_parts)
+    if any(startup.values()):
+        summary["startup_per_process"] = {k: r(v) for k, v in startup.items()}
     source = next((p["memory_source"] for p in parts if p.get("tests") and p.get("memory_source")), None)
     summary["memory"] = memory.summarize(tests, source)
     summary["imports"] = {

@@ -203,6 +203,7 @@ class ProfilerPlugin:
                 "xdist_installed": importlib.util.find_spec("xdist") is not None,
                 "cov": pm.has_plugin("_cov"),
                 "coverage_core": os.environ.get("COVERAGE_CORE"),
+                "testpaths": _testpaths(self.config),
             },
         }
 
@@ -222,6 +223,12 @@ def _option(config: pytest.Config, name: str) -> Any:
         with contextlib.suppress(ValueError, AttributeError):
             value = config.getoption(name)
     return value
+
+
+def _testpaths(config: pytest.Config) -> list[str]:
+    with contextlib.suppress(ValueError):
+        return [str(path) for path in config.getini("testpaths")]
+    return []
 
 
 def _exit_status_name(exitstatus: int) -> str:
