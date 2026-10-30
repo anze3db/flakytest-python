@@ -11,6 +11,22 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+- tachyon retries a stack read that caught the test process mid-call: on a suite that makes many short calls, 22% of
+  samples couldn't be read, now 1%. The report says why samples failed, and counts them the same way as samples (at
+  500 Hz they looked half as many as they were).
+- The report says the rate tests were sampled at: suites of over 10,000 tests are sampled at 500 Hz, but the report
+  said 1000.
+- A warning when the machine had fewer CPUs than the tests and their profilers needed (Apple silicon's performance
+  cores, a container's CPU limit), so the profile's test times are longer than unprofiled ones.
+- slow-startup times startup and collection per process instead of adding up the workers ("collection 5.1m" for 8
+  workers that took 38s each), and doesn't suggest testpaths when it's set.
+- A garbage collection pause over 0.5s is a one-off cost of the test it happened in, so the slowest tests are no
+  longer mostly GC pauses. The GC insight points at the allocations that set collections off, and says its estimate
+  is an upper bound that shrinks with more workers.
+- Memory read back from swap (a long GC pause scans the whole heap) no longer counts as memory a test needed and kept.
+- New insight: test classes that run the tests they inherit again (3 subclasses × 61 tests).
+- Django tests count the connections they open, and the db-connections insight only appears when they open some.
+
 ## [2026.0b3](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b3) - 2026-10-30
 
 ### Highlights
