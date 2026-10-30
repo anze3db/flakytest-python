@@ -42,12 +42,43 @@ def list_runs(root: Path) -> list[Path]:
     return sorted((p for p in directory.iterdir() if (p / "profile.json").exists()), key=lambda p: p.name)
 
 
+def unfinished_runs(root: Path) -> list[Path]:
+    """Runs that started but never wrote their profile: killed, or hung (pytest-xdist after workers ran out of
+    memory) and interrupted."""
+    directory = runs_dir(root)
+    if not directory.is_dir():
+        return []
+    return sorted(
+        (
+            p
+            for p in directory.iterdir()
+            if p.is_dir() and not (p / "profile.json").exists() and any(p.glob("meta-*.json"))
+        ),
+        key=lambda p: p.name,
+    )
+
+
+def recorded_tests(run_dir: Path) -> int:
+    """How many tests an unfinished run's processes recorded."""
+    count = 0
+    for path in run_dir.glob("tests-*.jsonl"):
+        with path.open("rb") as f:
+            count += sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1 << 20), b""))
+    return count
+
+
 def resolve_run(root: Path, ref: str | None = None) -> Path | None:
-    """A run directory from a path, a run id (or its prefix), "latest" or "previous"."""
+    """A run directory from a path, a run id (or its prefix), "latest" or "previous". A run id can name an
+    unfinished run."""
     if ref and Path(ref).exists():
         path = Path(ref)
         return path.parent if path.is_file() else path
     runs = list_runs(root)
+    if ref not in (None, "", "latest", "previous"):
+        matches = [
+            run for run in sorted([*runs, *unfinished_runs(root)]) if run.name.startswith(ref) or ref in run.name
+        ]
+        return matches[-1] if matches else None
     if not runs:
         return None
     if ref in (None, "", "latest"):
@@ -61,8 +92,7 @@ def resolve_run(root: Path, ref: str | None = None) -> Path | None:
         current = resolve_run(root, "latest")
         earlier = [run for run in runs if current is None or run.name < current.name]
         return earlier[-1] if earlier else None
-    matches = [run for run in runs if run.name.startswith(ref) or ref in run.name]
-    return matches[-1] if matches else None
+    return None
 
 
 def load_profile(run_dir: Path) -> dict[str, Any]:

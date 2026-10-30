@@ -1,11 +1,16 @@
 """Where a test session runs: CI provider or developer machine, git state, platform."""
 
+import contextlib
 import getpass
 import os
 import platform
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
+
+# A container's memory limit: cgroup v2, then v1 (which says "no limit" with a huge number)
+CGROUP_MEMORY_LIMITS = ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes")
 
 GIT_LOG_FORMAT = {
     "commit_hash": "%H",
@@ -114,7 +119,19 @@ def platform_info() -> dict[str, Any]:
         "release": platform.release(),
         "machine": platform.machine(),
         "cpu_count": os.cpu_count() or 1,
+        "memory": machine_memory(),
     }
+
+
+def machine_memory() -> int | None:
+    """The memory the tests can use, in bytes: the container's limit if it has one, else the machine's."""
+    limits = []
+    for path in CGROUP_MEMORY_LIMITS:
+        with contextlib.suppress(OSError, ValueError):  # "max": no limit
+            limits.append(int(Path(path).read_text().strip()))
+    with contextlib.suppress(OSError, ValueError, AttributeError):  # no sysconf on Windows
+        limits.append(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+    return min(limits) if limits else None
 
 
 def python_info() -> dict[str, Any]:

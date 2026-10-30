@@ -1,10 +1,12 @@
 import io
 import json
+import signal
 import sys
 
 import pytest
 
 from flakytest import cli, mcp
+from flakytest.profiling import session
 from flakytest.profiling.analysis import build_profile
 from flakytest.report import html, runs, text
 from tests.helpers import process, record, run_info
@@ -208,3 +210,49 @@ def test_flakytest_pytest_doesnt_profile_help(pytester, option):
     result = run_flakytest_pytest(pytester, option)
     assert result.ret == 0
     assert not (pytester.path / ".flakytest").exists()
+
+
+KILLED_SUITE = """
+import os
+import signal
+import time
+
+def test_recorded():
+    time.sleep(0.2)
+
+def test_killed():
+    os.kill(os.getpid(), signal.SIGKILL)  # what the out-of-memory killer does
+"""
+
+
+def test_a_run_that_never_finished_gets_a_partial_report(pytester, monkeypatch):
+    pytester.makepyfile(test_killed=KILLED_SUITE)
+    result = pytester.run(sys.executable, "-m", "flakytest", "pytest", "-p", "no:cacheprovider")
+    assert result.ret == -signal.SIGKILL
+    (run_dir,) = runs.unfinished_runs(pytester.path)
+    monkeypatch.chdir(pytester.path)
+    listed = pytester.run(sys.executable, "-m", "flakytest", "list")
+    listed.stdout.fnmatch_lines([f"*{run_dir.name}  unfinished, 1 tests recorded*"])
+    report = pytester.run(sys.executable, "-m", "flakytest", "report", run_dir.name)
+    assert report.ret == 0
+    report.stdout.fnmatch_lines(["unfinished: 1 tests in *", "*This run didn't finish*main (exited without writing*"])
+    profile = runs.load_profile(run_dir)
+    assert [t["nodeid"] for t in profile["tests"]] == ["test_killed.py::test_recorded"]
+    assert profile["run"]["exit_status"] == "UNFINISHED"
+    assert runs.unfinished_runs(pytester.path) == []
+
+
+def test_workers_that_needed_the_machines_memory_probably_ran_out_of_it():
+    gb = 1024**3
+    profile = {
+        "run": {"runner": "pytest", "platform": {"memory": 8 * gb}},
+        "summary": {"memory": {"machine_peak": int(5.7 * gb), "peak": int(1.9 * gb)}},
+        "tests": [],
+    }
+    warning = session.crash_warning(profile, {"gw1": "Not properly terminated"}, ["gw1"])
+    assert warning["message"].startswith("Workers crashed: gw1 (Not properly terminated).")
+    assert (
+        "probably killed for running out of memory. At up to 1.9 GB per worker, -n 2 would fit." in warning["message"]
+    )
+    profile["summary"]["memory"]["machine_peak"] = 2 * gb
+    assert "memory" not in session.crash_warning(profile, {"gw1": "Not properly terminated"}, ["gw1"])["message"]

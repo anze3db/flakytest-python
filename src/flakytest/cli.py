@@ -15,7 +15,7 @@ from typing import Any
 
 from flakytest import cloud, mcp
 from flakytest.__about__ import __version__
-from flakytest.profiling import unittest_support
+from flakytest.profiling import session, unittest_support
 from flakytest.profiling.samplers import choose_backend, find_py_spy, tachyon_available
 from flakytest.report import runs, text
 
@@ -101,6 +101,9 @@ def load(ref: str) -> tuple[Path, dict[str, Any]] | None:
             "Run your tests with `flakytest pytest` (or `flakytest python manage.py test`) first.\n"
         )
         return None
+    if not (run_dir / "profile.json").exists():
+        sys.stderr.write(f"Run {run_dir.name} didn't finish: building a report from what it recorded.\n")
+        return run_dir, session.build_unfinished(run_dir, root())
     return run_dir, runs.load_profile(run_dir)
 
 
@@ -199,15 +202,20 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 
 def cmd_list(_: argparse.Namespace) -> int:
-    found = runs.list_runs(root())
+    found = sorted([*runs.list_runs(root()), *runs.unfinished_runs(root())], key=lambda p: p.name)
     if not found:
         sys.stdout.write("No runs yet. Try `flakytest pytest` or `flakytest python -m unittest`.\n")
         return 0
     latest = runs.resolve_run(root(), "latest")
     for run_dir in found:
-        profile = runs.load_profile(run_dir)
         mark = "*" if run_dir == latest else " "
-        sys.stdout.write(f"{mark} {run_dir.name}  {text.headline(profile)}\n")
+        if not (run_dir / "profile.json").exists():
+            sys.stdout.write(
+                f"{mark} {run_dir.name}  unfinished, {runs.recorded_tests(run_dir):,} tests recorded: "
+                f"`flakytest report {run_dir.name}` builds a report of them\n"
+            )
+            continue
+        sys.stdout.write(f"{mark} {run_dir.name}  {text.headline(runs.load_profile(run_dir))}\n")
     return 0
 
 

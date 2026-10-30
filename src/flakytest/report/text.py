@@ -113,7 +113,8 @@ def headline(profile: dict[str, Any]) -> str:
     if profiler.get("failed"):
         sampling = f"{profiler['backend']} sampling failed"
     return (
-        f"{summary['tests']} tests in {fmt(run['duration'])} (test time {fmt(summary['test_time'])}) · "
+        ("unfinished: " if run.get("unfinished") else "")
+        + f"{summary['tests']} tests in {fmt(run['duration'])} (test time {fmt(summary['test_time'])}) · "
         f"{run['environment']['name']} · Python {run['python']['version']} · {sampling}"
     )
 

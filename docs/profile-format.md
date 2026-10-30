@@ -71,12 +71,16 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
     "id": "8c3f…",                       // uuid4 hex, unique per session
     "started_at": "2026-10-16T21:03:11Z",
     "duration": 84.2,                    // wall time of the pytest session
-    "exit_status": "OK",                 // pytest ExitCode name: OK, TESTS_FAILED, INTERRUPTED, …
+    "exit_status": "OK",                 // pytest ExitCode name: OK, TESTS_FAILED, INTERRUPTED, …, or UNFINISHED
+    "unfinished": true,                  // only for a run that never finished, built by `flakytest report <id>`
     "argv": ["tests/", "-x"],
     "runner": "pytest",                  // "pytest", "unittest" or "django" (manage.py test)
     "flakytest_version": "2026.0b1",
     "python": {"version": "3.15.0", "implementation": "CPython"},
-    "platform": {"system": "Linux", "release": "6.8.0", "machine": "x86_64", "cpu_count": 8},
+    "platform": {
+      "system": "Linux", "release": "6.8.0", "machine": "x86_64", "cpu_count": 8,
+      "memory": 8589934592              // bytes the tests can use: the container's limit, else the machine's
+    },
     "environment": {
       "kind": "ci",                      // "ci" or "local"
       "name": "ci:github-actions:test",  // stable grouping key, override with FLAKYTEST_ENV
@@ -92,7 +96,8 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       "backend": "tachyon",              // "tachyon", "py-spy" or "none"
       "rate": 1000,                      // requested samples per second
       "samples": 81234,                  // samples captured (all processes)
-      "error": null                      // why profiling was unavailable, if backend == "none"
+      "error": null,                     // why profiling was unavailable, if backend == "none"
+      "failed": true                     // only when no test got a sample (see the sampling_failed warning)
     },
     "workers": 1,                        // pytest-xdist or Django --parallel workers (1 without them)
     "plugins": ["django", "xdist", "cov"],
@@ -275,7 +280,15 @@ Every sample below a marker is assigned exactly one category from its frames:
   still exact, but there are no stacks.
 * `sample_errors` — the profiler failed to read a large share of samples.
 * `missing_workers` — pytest-xdist workers crashed (`workers` lists them). Their recorded tests are in the
-  profile; tests they didn't record have only exact durations and outcomes.
+  profile; tests they didn't record have only exact durations and outcomes. When the workers together needed most
+  of the machine's memory, it says they probably ran out of it and how many workers would fit. In the report of a
+  run that never finished, it says so and lists the processes that didn't finish.
+* `sampling_failed` — the profiler took samples, but none while a test ran (it stopped early, or failed to read
+  them): durations, fixtures, queries and memory are exact, there is no breakdown.
+* `sampler_stopped` — a profiler stopped sampling well before its process stopped it, so the tests after that have
+  no samples.
+* `timeline_unreliable` — the sampled startup and collection times added up to more than the run took, so the
+  session timeline is left out.
 * `samples_incomplete` — a profiler didn't finish writing its samples (its process was killed), so the last tests'
   breakdowns are missing.
 * `memory_growth` — a test process's memory grew by at least 256 MB (and half of what it started with) over the

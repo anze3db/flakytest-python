@@ -31,7 +31,7 @@ from flakytest.profiling import analysis
 from flakytest.profiling.dbtrack import QueryStats, QueryTracker
 from flakytest.profiling.fixtures import SLOW_FIXTURE, FixtureStats
 from flakytest.profiling.markers import PhaseMarkers, make_marker, marker_key
-from flakytest.profiling.memory import MemoryMeter
+from flakytest.profiling.memory import MemoryMeter, mb
 from flakytest.profiling.samplers import DEFAULT_RATES, Sampler, choose_backend
 from flakytest.report import html, runs, text
 
@@ -44,6 +44,10 @@ LARGE_SUITE = 10_000
 LARGE_SUITE_RATE = 500
 BUSY_PY_SPY_RATE = 100
 SAVE_EVERY = 1.0  # seconds between writing the records of finished tests to disk
+RUN_FILE = "run.json"  # what the run is, for a report of it if it never finishes
+# Crashed workers that needed this share of the machine's memory together were probably killed for running out of
+# it: the rest goes to the system, the database, the profilers and pytest-xdist's controller
+OUT_OF_MEMORY_SHARE = 0.6
 
 
 def new_record(nodeid: str, file: str, cls: str | None, name: str, worker: str | None) -> dict[str, Any]:
@@ -166,12 +170,12 @@ class Session:
                 self.sampler = None
         if self.sampler is not None and markers:  # only samples need to know which test they were taken in
             self.markers.install()
-        if self.worker:  # only the process that started the workers can use what a crashed one recorded
+        if not self.controller:  # what a process that crashes recorded can still go in the report
             self.tests_file = (self.run_dir / f"tests-{self.pid}.jsonl").open("a", encoding="utf-8")
-        if not self.controller:
             self._write_meta("running")
         if not self.worker:  # git runs a few subprocesses: let them run while the tests do
-            self.facts = Background(lambda: {"environment": detect_environment(), "git": get_git_data()})
+            write_json(self.run_dir / RUN_FILE, self._run_base())
+            self.facts = Background(self._facts)
 
     @property
     def sampling(self) -> bool:
@@ -374,32 +378,13 @@ class Session:
         return parts
 
     def _recover(self, meta: dict[str, Any]) -> dict[str, Any]:
-        """The part of a worker that died before building it: its recorded tests, and the samples its profiler wrote
-        (the profiler notices the worker is gone and writes what it has)."""
+        """The part of a worker that died before building it (its profiler notices the worker is gone and writes
+        what it has: give it a moment)."""
         sampler_pid = meta.get("sampler_pid")
         deadline = time.monotonic() + SAMPLER_WAIT
         while sampler_pid and _running(sampler_pid) and time.monotonic() < deadline:
             time.sleep(0.1)
-        tests: dict[str, dict[str, Any]] = {}
-        tests_file = self.run_dir / f"tests-{meta['pid']}.jsonl"
-        if tests_file.exists():
-            for line in tests_file.read_text().splitlines():
-                with contextlib.suppress(ValueError):
-                    record = json.loads(line)
-                    tests.setdefault(record["nodeid"], {}).update(record)
-        for record in tests.values():  # the reports the parent got are the more complete
-            if (report := self.reports.get(record["nodeid"])) is not None:
-                record.update(phases=report["phases"], duration=report["duration"], outcome=report["outcome"])
-        if meta.get("sampled_seconds") is not None and meta.get("status") == "running":
-            meta["sampled_seconds"] = max(0.0, time.time() - meta["started_at"])
-        process = meta | {
-            "crashed": True,
-            "tests": [t for t in tests.values() if "key" in t],
-            "fixture_users": {},
-            "fixture_stats": [],
-            "context": {},
-        }
-        return analysis.build_part(process, self.rootdir, self.started_at.timestamp())
+        return recover_part(self.run_dir, meta, self.rootdir, self.started_at.timestamp(), self.reports)
 
     def _backfill(self, parts: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, int]:
         """A part for the tests that were reported but that no process recorded: exact timings and outcomes only."""
@@ -428,32 +413,10 @@ class Session:
         recovered = [p.get("worker") for p in parts if p.get("worker") in self.crashed]
         if backfill is not None:
             parts.append(backfill)
-        sampled = [p for p in parts if p["backend"] != "none"]
-        backend = sampled[0]["backend"] if sampled else "none"
-        rate = sampled[0]["rate"] if sampled else self.rate
-        errors = [p["backend_error"] for p in parts if p.get("backend_error")]
-        contexts = [p["context"] for p in parts if p.get("context")] or [self.full_context()]
-        context = next((c for c in contexts if c.get("django")), contexts[0])
-        run = {
-            "id": self.run_dir.name,
-            "started_at": self.started_at.isoformat().replace("+00:00", "Z"),
-            "duration": round(time.perf_counter() - self.started, 6),
-            "exit_status": exit_status,
-            "argv": self.argv,
-            "runner": self.runner,
-            "flakytest_version": __version__,
-            "python": python_info(),
-            "platform": platform_info(),
-            **(self.facts.result() if self.facts else {"environment": detect_environment(), "git": get_git_data()}),
-            "profiler": {
-                "backend": backend,
-                "rate": rate,
-                "samples": 0,
-                "error": errors[0] if errors else None,
-            },
-            "workers": max(1, len([p for p in parts if p.get("worker")])),
-            "plugins": sorted((context.get("pytest") or {}).get("plugins", [])),
-        }
+        facts = self.facts.result() if self.facts else {"environment": detect_environment(), "git": get_git_data()}
+        base = self._run_base() | facts
+        base |= {"duration": round(time.perf_counter() - self.started, 6), "exit_status": exit_status}
+        run, context = describe_run(base, parts, self.rate, self.full_context())
         self.profile = analysis.merge(run, parts, self.rootdir, context)
         # How long building the profile took after the last test: the processes' parts (built at the same time with
         # several workers), then merging them. Writing the files comes on top.
@@ -463,14 +426,11 @@ class Session:
             "merge": round(time.perf_counter() - started, 3),
         }
         if self.crashed or missing:
-            self.profile["warnings"].insert(0, self._missing_warning(missing, recovered))
-        profile_json = json.dumps(self.profile, separators=(",", ":"), default=str)
-        (self.run_dir / "profile.json").write_text(profile_json)
-        self.report_path = html.write_report(profile_json, self.run_dir)
-        del profile_json
-        runs.write_summary(self.profile, self.run_dir)
+            self.profile["warnings"].insert(0, crash_warning(self.profile, self.crashed, recovered, missing))
+        self.report_path = write_outputs(self.profile, self.run_dir)
         runs.mark_latest(self.run_dir)
         leftovers = [
+            self.run_dir / RUN_FILE,
             *self.run_dir.glob("meta-*.json"),
             *self.run_dir.glob("part-*.json"),
             *self.run_dir.glob("tests-*.jsonl"),
@@ -478,26 +438,31 @@ class Session:
             *self.run_dir.glob("control-*"),
             *self.run_dir.glob("*.ready"),
         ]
-        if not errors and not self.crashed:  # keep the profiler's log when something went wrong
+        if not run["profiler"]["error"] and not self.crashed:  # keep the profiler's log when something went wrong
             leftovers += self.run_dir.glob("sampler-*.log")
         for leftover in leftovers:
             with contextlib.suppress(OSError):
                 leftover.unlink()
         self.upload_url = cloud.upload_profile(self.profile)
 
-    def _missing_warning(self, missing: int, recovered: list[str | None]) -> dict[str, Any]:
-        crashed = ", ".join(f"{worker} ({reason})" for worker, reason in sorted(self.crashed.items()))
-        message = f"Workers crashed: {crashed}. " if crashed else ""
-        if recovered:
-            message += f"What {', '.join(str(w) for w in recovered)} recorded before crashing is included. "
-        if missing:
-            message += (
-                f"{missing} test{'s have' if missing != 1 else ' has'} only exact durations and outcomes, from "
-                "the test runner's reports: no samples, fixtures, queries or memory."
-            )
-        if not missing and recovered:
-            message += "Every test is in the profile."
-        return {"code": "missing_workers", "message": message.strip(), "workers": sorted(self.crashed)}
+    def _run_base(self) -> dict[str, Any]:
+        """What the profile's "run" section says about the run before it ends."""
+        return {
+            "id": self.run_dir.name,
+            "started_at": self.started_at.isoformat().replace("+00:00", "Z"),
+            "argv": self.argv,
+            "runner": self.runner,
+            "flakytest_version": __version__,
+            "python": python_info(),
+            "platform": platform_info(),
+        }
+
+    def _facts(self) -> dict[str, Any]:
+        """The environment and git facts, also saved for a report of the run if it never finishes."""
+        facts = {"environment": detect_environment(), "git": get_git_data()}
+        with contextlib.suppress(OSError):
+            write_json(self.run_dir / RUN_FILE, self._run_base() | facts)
+        return facts
 
     def full_context(self) -> dict[str, Any]:
         """What the insights need to know about the test runner and the project (Django settings)."""
@@ -512,6 +477,169 @@ class Session:
             return []
         previous = runs.previous_summary(self.run_dir, self.profile)
         return text.terminal_summary(self.profile, self.report_path, self.upload_url, previous)
+
+
+def recover_part(
+    run_dir: Path,
+    meta: dict[str, Any],
+    rootdir: Path,
+    started: float,
+    reports: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The part of a process that didn't build its own: the tests it recorded and the samples its profiler wrote.
+    reports: what the test runner reported about each test, which is more complete than the records."""
+    tests: dict[str, dict[str, Any]] = {}
+    tests_file = run_dir / f"tests-{meta['pid']}.jsonl"
+    if tests_file.exists():
+        for line in tests_file.read_text().splitlines():
+            with contextlib.suppress(ValueError):
+                record = json.loads(line)
+                tests.setdefault(record["nodeid"], {}).update(record)
+    for record in tests.values():
+        if (report := (reports or {}).get(record["nodeid"])) is not None:
+            record.update(phases=report["phases"], duration=report["duration"], outcome=report["outcome"])
+    if meta.get("sampled_seconds") is not None and meta.get("status") == "running":
+        meta["sampled_seconds"] = max(0.0, last_written(run_dir, meta) - meta["started_at"])
+    process = meta | {
+        "crashed": True,
+        "tests": [t for t in tests.values() if "key" in t],
+        "fixture_users": {},
+        "fixture_stats": [],
+        "context": {},
+    }
+    return analysis.build_part(process, rootdir, started)
+
+
+def last_written(run_dir: Path, meta: dict[str, Any]) -> float:
+    """When a process, or its profiler, last wrote to the run directory: about when it stopped."""
+    paths = [run_dir / f"tests-{meta['pid']}.jsonl", Path(meta["samples_file"]) if meta.get("samples_file") else None]
+    return max((path.stat().st_mtime for path in paths if path is not None and path.exists()), default=time.time())
+
+
+def describe_run(
+    base: dict[str, Any], parts: list[dict[str, Any]], rate: int, fallback_context: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The profile's "run" section, from what the run knew (base) and what its processes' parts say, and the
+    context the insights need."""
+    sampled = [p for p in parts if p["backend"] != "none"]
+    errors = [p["backend_error"] for p in parts if p.get("backend_error")]
+    contexts = [p["context"] for p in parts if p.get("context")] or [fallback_context]
+    context = next((c for c in contexts if c.get("django")), contexts[0])
+    run = base | {
+        "profiler": {
+            "backend": sampled[0]["backend"] if sampled else "none",
+            "rate": sampled[0]["rate"] if sampled else rate,
+            "samples": 0,
+            "error": errors[0] if errors else None,
+        },
+        "workers": max(1, len([p for p in parts if p.get("worker")])),
+        "plugins": sorted((context.get("pytest") or {}).get("plugins", [])),
+    }
+    return run, context
+
+
+def write_outputs(profile: dict[str, Any], run_dir: Path) -> Path:
+    """profile.json, the HTML report and summary.json. Returns the report's path."""
+    profile_json = json.dumps(profile, separators=(",", ":"), default=str)
+    (run_dir / "profile.json").write_text(profile_json)
+    report_path = html.write_report(profile_json, run_dir)
+    del profile_json
+    runs.write_summary(profile, run_dir)
+    return report_path
+
+
+def crash_warning(
+    profile: dict[str, Any],
+    crashed: dict[str, str],
+    recovered: list[str | None],
+    missing: int = 0,
+    *,
+    unfinished: bool = False,
+) -> dict[str, Any]:
+    """Which processes didn't finish and why, what of theirs is in the profile, and whether they probably ran out of
+    memory."""
+    stopped = ", ".join(f"{worker} ({reason})" for worker, reason in sorted(crashed.items()))
+    message = ""
+    if unfinished:
+        message = (
+            f"This run didn't finish: the report is built from what its processes recorded "
+            f"({len(profile['tests']):,} tests), without the tests that were running or still to run. "
+        )
+        if stopped:
+            message += f"Processes that didn't finish: {stopped}. "
+    elif stopped:
+        message = f"Workers crashed: {stopped}. "
+    if recovered and not unfinished:
+        message += f"What {', '.join(str(w) for w in recovered)} recorded before crashing is included. "
+    if missing:
+        message += (
+            f"{missing} test{'s have' if missing != 1 else ' has'} only exact durations and outcomes, from "
+            "the test runner's reports: no samples, fixtures, queries or memory. "
+        )
+    if not missing and recovered and not unfinished:
+        message += "Every test is in the profile. "
+    message += out_of_memory_note(profile)
+    return {"code": "missing_workers", "message": message.strip(), "workers": sorted(crashed)}
+
+
+def out_of_memory_note(profile: dict[str, Any]) -> str:
+    """Why processes probably died: together they needed about as much memory as the machine (or container) has."""
+    total = profile["run"]["platform"].get("memory")
+    usage = profile["summary"].get("memory") or {}
+    together, each = usage.get("machine_peak"), usage.get("peak")
+    if not total or not together or not each or together < OUT_OF_MEMORY_SHARE * total:
+        return ""
+    option = "--parallel" if profile["run"].get("runner") == "django" else "-n"
+    fits = max(1, int(OUT_OF_MEMORY_SHARE * total // each))
+    return (
+        f"At their peak the tests needed {mb(together)} together, close to the {mb(total)} this machine has, so "
+        f"processes were probably killed for running out of memory. At up to {mb(each)} per worker, {option} {fits} "
+        "would fit."
+    )
+
+
+def build_unfinished(run_dir: Path, rootdir: Path) -> dict[str, Any]:
+    """The profile of a run that never finished (its workers ran out of memory and pytest-xdist hung, or it was
+    killed), from what its processes recorded, marked unfinished. The files it's built from stay, so it can be built
+    again."""
+    metas = [json.loads(path.read_text()) for path in sorted(run_dir.glob("meta-*.json"))]
+    run_file = run_dir / RUN_FILE
+    base: dict[str, Any] = json.loads(run_file.read_text()) if run_file.exists() else {}
+    if "started_at" in base:
+        started = dt.datetime.fromisoformat(base["started_at"].replace("Z", "+00:00")).timestamp()
+    else:
+        started = min((m["started_at"] for m in metas), default=time.time())
+    parts = []
+    stopped: dict[str, str] = {}
+    for meta in metas:
+        part_path = run_dir / f"part-{meta['pid']}.json"
+        if part_path.exists():
+            parts.append(json.loads(part_path.read_text()))
+            continue
+        parts.append(recover_part(run_dir, meta, rootdir, started))
+        reason = "still running" if _running(meta["pid"]) else "exited without writing its profile"
+        stopped[meta["worker"] or "main"] = reason
+    ended = max((last_written(run_dir, meta) for meta in metas), default=started)
+    base = (
+        {
+            "id": run_dir.name,
+            "started_at": dt.datetime.fromtimestamp(started, dt.UTC).isoformat().replace("+00:00", "Z"),
+            "argv": [],
+            "runner": "pytest",
+            "flakytest_version": __version__,
+            "python": python_info(),
+            "platform": platform_info(),
+            "environment": detect_environment(),
+            "git": {},
+        }
+        | base
+        | {"duration": round(max(0.0, ended - started), 6), "exit_status": "UNFINISHED", "unfinished": True}
+    )
+    run, context = describe_run(base, parts, parts[0]["rate"] if parts else 0, {})
+    profile = analysis.merge(run, parts, rootdir, context)
+    profile["warnings"].insert(0, crash_warning(profile, stopped, [], unfinished=True))
+    write_outputs(profile, run_dir)
+    return profile
 
 
 def _call(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
