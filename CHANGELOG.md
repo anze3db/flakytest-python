@@ -11,6 +11,18 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+- A run that never finished gets a report: when workers run out of memory and pytest-xdist hangs, or the run is
+  killed, `flakytest list` shows it as unfinished and `flakytest report <id>` builds the report from what its
+  processes recorded. When crashed workers had needed most of the machine's memory together, the report says they
+  probably ran out of it and how many workers would fit.
+- tachyon keeps sampling on macOS: it took pytest for gone a few seconds in, and the report spread those few seconds
+  of samples over the whole run (a "29.9m startup" in a 5.5-minute run). A profiler that stops early is now
+  reported, and when no test got a sample the report says sampling failed.
+- tachyon's profiler process no longer grows with the run: it stays around 60 MB.
+- "vs previous run" compares with the last run of the same tests, says when the selection or worker count differs,
+  and counts the tests that ran but were skipped before (and the other way round).
+- `flakytest pytest --help` (and `--fixtures`, `--markers`) no longer starts a profiling run.
+
 ## [2026.0b2](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b2) - 2026-10-28
 
 ### Highlights
