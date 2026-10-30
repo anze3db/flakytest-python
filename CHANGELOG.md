@@ -11,6 +11,10 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 
 ## Unreleased
 
+## [2026.0b3](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b3) - 2026-10-30
+
+### Highlights
+
 - A run that never finished gets a report: when workers run out of memory and pytest-xdist hangs, or the run is
   killed, `flakytest list` shows it as unfinished and `flakytest report <id>` builds the report from what its
   processes recorded. When crashed workers had needed most of the machine's memory together, the report says they
@@ -22,6 +26,25 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 - "vs previous run" compares with the last run of the same tests, says when the selection or worker count differs,
   and counts the tests that ran but were skipped before (and the other way round).
 - `flakytest pytest --help` (and `--fixtures`, `--markers`) no longer starts a profiling run.
+
+### Changes
+
+* Keep the tachyon sampler's memory flat over a long run
+* Keep sampling on macOS, and say when a sampler stopped early
+* Don't profile flakytest pytest --help
+* Compare with the last run of the same tests, and count tests that ran only now
+* Build a report of a run that never finished
+* Note the unreleased changes in the changelog
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+
+
+**Full Changelog**: https://github.com/anze3db/flakytest-python/compare/2026.0b2...2026.0b3
+
+### Contributors
+
+Thank you to everyone who contributed to this release: @anze3db
 
 ## [2026.0b2](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b2) - 2026-10-28
 
