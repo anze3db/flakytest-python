@@ -167,3 +167,10 @@ def test_flakytest_pytest_with_xdist_workers(pytester):
     assert profile["run"]["postprocessing"]["tests_finished_at"] > 0  # the controller saw the tests finish
     assert {t["worker"] for t in profile["tests"]} <= {"gw0", "gw1"}
     assert len(profile["tests"]) == 2
+
+
+@pytest.mark.parametrize("option", ["--help", "--version", "--fixtures", "--markers"])
+def test_flakytest_pytest_doesnt_profile_help(pytester, option):
+    result = run_flakytest_pytest(pytester, option)
+    assert result.ret == 0
+    assert not (pytester.path / ".flakytest").exists()

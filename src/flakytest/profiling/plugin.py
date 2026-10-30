@@ -53,6 +53,14 @@ def add_options(parser: pytest.Parser) -> None:
     )
 
 
+# Options that make pytest print something and exit without running tests: nothing to profile
+INFO_OPTIONS = ("help", "version", "markers", "showfixtures", "show_fixtures_per_test")
+
+
+def runs_tests(config: pytest.Config) -> bool:
+    return not any(_option(config, name) for name in INFO_OPTIONS)
+
+
 def is_xdist_controller(config: pytest.Config) -> bool:
     if os.environ.get("PYTEST_XDIST_WORKER"):
         return False

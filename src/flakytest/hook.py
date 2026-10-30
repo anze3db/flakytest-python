@@ -57,7 +57,7 @@ from flakytest.__about__ import __version__
 from flakytest.cloud import logger, make_request, stash, token
 from flakytest.env_vars import env_vars
 from flakytest.environment import detect_environment, get_git_data
-from flakytest.profiling.plugin import ProfilerPlugin, add_options
+from flakytest.profiling.plugin import ProfilerPlugin, add_options, runs_tests
 from flakytest.profiling.session import Session
 
 test_batch_size = int(os.environ.get("FLAKYTEST_TEST_BATCH_SIZE", "200"))
@@ -95,8 +95,9 @@ def pytest_addoption(parser):
 def pytest_load_initial_conftests(early_config):
     """Start profiling before conftest.py files (and Django, …) are imported, so startup is measured too.
 
-    This module is only loaded as a plugin by `flakytest pytest`, so loading it means profiling."""
-    if Session.active is None:
+    This module is only loaded as a plugin by `flakytest pytest`, so loading it means profiling, unless pytest only
+    prints its help, version, markers or fixtures."""
+    if Session.active is None and runs_tests(early_config):
         plugin = ProfilerPlugin(early_config)
         plugin.start()
         early_config.pluginmanager.register(plugin, "flakytest-profiler")
@@ -107,7 +108,9 @@ def pytest_configure(config):
 
     Send env/git/python data to host, retrieve ingest id and muted tests and store them in the config.stash"""
     if not config.pluginmanager.has_plugin("flakytest-profiler"):
-        if Session.active is None:  # e.g. options passed through pytest.main() skip initial conftests
+        if Session.active is None and runs_tests(
+            config
+        ):  # e.g. options passed through pytest.main() skip initial conftests
             plugin = ProfilerPlugin(config)
             plugin.start()
             config.pluginmanager.register(plugin, "flakytest-profiler")
