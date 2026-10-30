@@ -86,3 +86,21 @@ def test_tachyon_sampler_knows_when_its_process_is_gone_without_proc(monkeypatch
     monkeypatch.setattr(os.path, "isdir", lambda path: False)  # macOS has no /proc
     assert not tachyon_sampler.gone(os.getpid())
     assert tachyon_sampler.gone(finished.pid)
+
+
+def test_tachyon_sampler_retries_a_read_that_caught_the_stack_changing():
+    tachyon_sampler = pytest.importorskip("flakytest.profiling.tachyon_sampler")  # Python 3.15+
+    attempts = []
+
+    class Unwinder:
+        def get_stack_trace(self):
+            attempts.append(1)
+            if len(attempts) < 3:
+                message = "Failed to parse initial frame in chain"
+                raise RuntimeError(message)
+            return ["stack"]
+
+    assert tachyon_sampler.read_stack(Unwinder()) == ["stack"]
+    assert len(attempts) == 3
+    error = RuntimeError("process_vm_readv failed for PID 12 at address 0x7f3a (size 8, partial read 0 bytes): Bad")
+    assert tachyon_sampler.error_message(error) == "process_vm_readv failed for PID N at address N: Bad"

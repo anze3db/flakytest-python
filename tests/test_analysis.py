@@ -113,6 +113,17 @@ def test_a_sampler_that_stopped_after_some_tests(tmp_path):
     assert doc["warnings"][0]["code"] == "sampler_stopped"
 
 
+def test_unreadable_samples_say_why(tmp_path):
+    errors = {"Failed to parse initial frame in chain": 300, "Unhandled frame owner N.": 20}
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", [(phase_stack(FAST, "call"), 1000)], errors=errors)
+    tests = [record(FAST, call=1.0)]
+    doc = build_profile(run_info(duration=2.0), [process(tests, samples, sampled_seconds=1.0)], tmp_path, {})
+    assert doc["run"]["profiler"]["sample_errors"] == 320
+    assert doc["run"]["profiler"]["sample_error_kinds"] == errors
+    warning = next(w for w in doc["warnings"] if w["code"] == "sample_errors")
+    assert warning["message"].startswith("320 samples could not be read (24%): tachyon read the stack while")
+
+
 def test_a_timeline_longer_than_the_run_is_left_out(tmp_path):
     samples = write_tachyon_samples(tmp_path / "samples-1.json", [(STARTUP, 10), (phase_stack(FAST, "call"), 10)])
     tests = [record(FAST, call=1.0)]

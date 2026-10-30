@@ -40,7 +40,7 @@ def phase_stack(nodeid, phase, *frames):
     return (*ROOT_FRAMES, marker, FROM_CALL, *frames)
 
 
-def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True, seconds=None):
+def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True, seconds=None, errors=None):
     """A tachyon_sampler file. stacks: the main thread's [(frames from the root, count)]; threads: other threads'
     [(main thread's marker frame, thread id, frames from the root, count)]; seconds: how long the sampler sampled."""
     path = path.with_suffix(".jsonl")
@@ -63,6 +63,8 @@ def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True, seconds=
         [frame_ids.setdefault(tuple(m), len(frame_ids)), tid, leaf(frames), count] for m, tid, frames, count in threads
     ]
     line = {"frames": [list(f) for f in frame_ids], "nodes": nodes, "main": main, "threads": other, "failed": 0}
+    if errors:
+        line |= {"failed": sum(errors.values()), "errors": errors}
     if done:
         line["done"] = True
     if seconds is not None:

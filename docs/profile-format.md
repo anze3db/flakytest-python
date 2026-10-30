@@ -95,7 +95,9 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
     "profiler": {
       "backend": "tachyon",              // "tachyon", "py-spy" or "none"
       "rate": 1000,                      // requested samples per second
-      "samples": 81234,                  // samples captured (all processes)
+      "samples": 81234,                  // samples captured (all processes), counted at the requested rate
+      "sample_errors": 1200,             // samples that couldn't be read, counted the same way
+      "sample_error_kinds": {"Failed to parse initial frame in chain": 1200},  // why, at most 5 (tachyon only)
       "error": null,                     // why profiling was unavailable, if backend == "none"
       "failed": true                     // only when no test got a sample (see the sampling_failed warning)
     },
@@ -278,7 +280,7 @@ Every sample below a marker is assigned exactly one category from its frames:
 * `short_tests` — tests shorter than a sample interval got no samples. Expected, informational.
 * `profiler_unavailable` — no sampling profiler could attach; durations, fixtures and query counts are
   still exact, but there are no stacks.
-* `sample_errors` — the profiler failed to read a large share of samples.
+* `sample_errors` — the profiler failed to read a large share of samples (over 10%), and the most common reason.
 * `missing_workers` — pytest-xdist workers crashed (`workers` lists them). Their recorded tests are in the
   profile; tests they didn't record have only exact durations and outcomes. When the workers together needed most
   of the machine's memory, it says they probably ran out of it and how many workers would fit. In the report of a

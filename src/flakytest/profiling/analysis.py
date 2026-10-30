@@ -60,6 +60,8 @@ WARMUP_IMPORTS_MIN = 0.05
 # A sampler that stopped writing this much before its process stopped it (seconds, or share of the run) stopped early
 STOPPED_EARLY = 5.0
 STOPPED_EARLY_SHARE = 0.1
+# tachyon's errors for a stack that changed while it was read
+TORN_READS = ("Failed to parse initial frame", "Unhandled frame owner", "Incomplete sample", "process_vm_readv failed")
 # The session timeline can't add up to more than the processes' wall clock: allow for rounding and clock skew
 TIMELINE_SLACK = 1.1
 
@@ -363,6 +365,7 @@ class PartBuilder:
             "fixture_stats": process.get("fixture_stats", []),
             "samples": total,
             "sample_errors": samples.failed if samples is not None else 0,
+            "sample_error_kinds": dict(samples.errors) if samples is not None else {},
             "samples_complete": samples.complete if samples is not None else True,
             "sampler_stopped_at": r(stopped_at) if stopped_at is not None else None,
             "sampled_seconds": r(process.get("sampled_seconds") or 0.0),
@@ -662,6 +665,7 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     imports: defaultdict[str, Counter[int]] = defaultdict(Counter)
     matched: dict[str, Matched] = defaultdict(Matched)
     total_samples = sample_errors = 0
+    error_kinds: Counter[str] = Counter()
     incomplete = []
     stopped: list[tuple[str, float, float]] = []  # (worker, stopped at, sampled seconds) of samplers that stopped early
     for part in parts:
@@ -710,6 +714,7 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
             matched[name].merge(Matched.from_dict(data), frame_ids)
         total_samples += part["samples"]
         sample_errors += part["sample_errors"]
+        error_kinds.update(part.get("sample_error_kinds", {}))
         if part["backend"] != "none" and not part.get("samples_complete", True):
             incomplete.append(part.get("worker") or "main")
         if part.get("sampler_stopped_at") is not None:
@@ -733,6 +738,8 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     }
     run["profiler"]["samples"] = total_samples
     run["profiler"]["sample_errors"] = sample_errors
+    if error_kinds:
+        run["profiler"]["sample_error_kinds"] = dict(error_kinds.most_common(5))
     warnings = _warnings(tests, run, total_samples, stopped)
     if not timeline_fits:
         warnings.append(
@@ -916,10 +923,25 @@ def _warnings(
         warnings.append(
             {
                 "code": "sample_errors",
-                "message": f"{errors} samples could not be read ({errors / (errors + total_samples):.0%}).",
+                "message": f"{errors:,} samples could not be read ({errors / (errors + total_samples):.0%}): "
+                f"{_sample_error_reason(profiler)}. Those moments are missing from the breakdowns; durations, "
+                "fixture times, queries and memory are exact.",
             }
         )
     return warnings
+
+
+def _sample_error_reason(profiler: dict[str, Any]) -> str:
+    kinds = profiler.get("sample_error_kinds") or {}
+    if not kinds:
+        return "the profiler didn't say why"
+    message = max(kinds.items(), key=lambda kv: kv[1])[0]
+    if message.startswith(TORN_READS):
+        return (
+            f'{profiler["backend"]} read the stack while the test process was changing it ("{message}"), even after '
+            "retrying, which misses code that makes many short calls more often than code that waits"
+        )
+    return f'the most common error was "{message}"'
 
 
 def build_profile(run: dict[str, Any], processes: list[dict[str, Any]], rootdir: Path, context: dict[str, Any]) -> dict:

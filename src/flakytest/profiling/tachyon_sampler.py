@@ -13,7 +13,8 @@ ids (the reader doesn't mind seeing a frame or stack twice). Each line is
      "nodes": [[parent node or -1, frame], ...],      # new stack nodes, likewise
      "main": [[node, weight], ...],                   # the main thread's samples since the last line
      "threads": [[marker frame, thread id, node, weight], ...],
-     "failed": 3,
+     "failed": 3,                                     # weight of the samples that couldn't be read
+     "errors": {"Failed to parse initial frame in chain": 3},   # why, by the unwinder's message
      "seconds": 12.5}                                 # how long it has been sampling
 
 Other threads are sampled while the main thread isn't running Python (waiting on a thread pool, a lock or I/O),
@@ -29,6 +30,7 @@ import contextlib
 import json
 import mmap
 import os
+import re
 import signal
 import struct
 import sys
@@ -52,6 +54,14 @@ SLOW_DOWN = 4
 NO_THREADS_BACKOFF = 50
 # After this many failed samples in a row, check whether the target is still alive
 GONE_CHECK = 20
+# Reading a running process's stack can catch it while a call or return changes it ("Failed to parse initial frame in
+# chain"): a read a few microseconds later almost always works, so a failed read is retried right away. On a suite
+# that makes many short calls, 22% of samples failed without retrying and 1% with it (pausing the process for each
+# read fails even less, but slows it down by 10-15%)
+READ_ATTEMPTS = 6
+READ_ERRORS = (RuntimeError, UnicodeDecodeError, MemoryError, OSError)
+NUMBER = re.compile(r"-?(?:0x[0-9a-f]+|\d+)")
+PARENTHESES = re.compile(r"\s*\([^)]*\)")
 THREAD_STATUS_HAS_GIL = 1 << 0
 THREAD_STATUS_ON_CPU = 1 << 1
 THREAD_STATUS_MAIN_THREAD = 1 << 5
@@ -72,6 +82,7 @@ class StackWriter:
         # thread id -> (frames, nodes, marker frame id, marker position) of its previous sample
         self.previous: dict[int, tuple[list, list[int], int, int]] = {}
         self.failed = 0
+        self.errors: dict[str, int] = {}
         self.samples = 0
         self.flushed_at = time.monotonic()
         self.started = time.perf_counter()
@@ -137,6 +148,11 @@ class StackWriter:
                 key = (marker, thread.thread_id, leaf)
                 self.threads[key] = self.threads.get(key, 0) + weight
 
+    def add_failed(self, errors: dict[str, int]) -> None:
+        for message, weight in errors.items():
+            self.failed += weight
+            self.errors[message] = self.errors.get(message, 0) + weight
+
     def maybe_flush(self) -> None:
         if len(self.main) + len(self.threads) >= FLUSH_ENTRIES or time.monotonic() - self.flushed_at >= FLUSH_SECONDS:
             self.flush()
@@ -148,12 +164,13 @@ class StackWriter:
             "main": list(self.main.items()),
             "threads": [[*key, weight] for key, weight in self.threads.items()],
             "failed": self.failed,
+            "errors": self.errors,
             "seconds": round(time.perf_counter() - self.started, 3),
             **extra,
         }
         self.file.write(json.dumps(line, separators=(",", ":")) + "\n")
         self.file.flush()
-        self.new_frames, self.new_nodes, self.main, self.threads, self.failed = [], [], {}, {}, 0
+        self.new_frames, self.new_nodes, self.main, self.threads, self.failed, self.errors = [], [], {}, {}, 0, {}
         self.flushed_at = time.monotonic()
         if len(self.trie) + len(self.by_object) > FORGET_AFTER:
             # The ids written so far stay valid: each thread's next stack can still start from its previous one
@@ -217,6 +234,24 @@ def gone(pid: int) -> bool:
     return False
 
 
+def error_message(error: BaseException) -> str:
+    """The unwinder's message, without the numbers in it ("Unhandled frame owner -112.")."""
+    first = PARENTHESES.sub("", (str(error).strip().splitlines() or [""])[0])[:100]
+    return NUMBER.sub("N", first) or type(error).__name__
+
+
+def read_stack(unwinder):
+    for attempt in range(READ_ATTEMPTS):
+        try:
+            return unwinder.get_stack_trace()
+        except ProcessLookupError:
+            raise
+        except READ_ERRORS:
+            if attempt == READ_ATTEMPTS - 1:
+                raise
+    raise AssertionError
+
+
 def sample(pid: int, main_unwinder, all_unwinder, *, writer: StackWriter, control: Control, unit_usec: int) -> None:
     """Sample until interrupted or the target exits."""
     unit = unit_usec / 1_000_000
@@ -224,6 +259,7 @@ def sample(pid: int, main_unwinder, all_unwinder, *, writer: StackWriter, contro
     test, test_samples = -1, 0
     skip_threads = 0
     failures = 0
+    failed: dict[str, int] = {}  # the weight of the failures since the last good sample, by message
     while True:
         sequence, wanted_usec = control.read()
         interval = max(unit, wanted_usec / 1_000_000)
@@ -237,16 +273,19 @@ def sample(pid: int, main_unwinder, all_unwinder, *, writer: StackWriter, contro
             continue
         weight = max(1, round(interval / unit))
         try:
-            main_thread = main_thread_of(main_unwinder.get_stack_trace())
+            main_thread = main_thread_of(read_stack(main_unwinder))
             others = []
             idle = main_thread is not None and not main_thread.status & (THREAD_STATUS_HAS_GIL | THREAD_STATUS_ON_CPU)
             if idle and all_unwinder is not None and skip_threads <= 0:
-                others = [
-                    thread
-                    for interpreter in all_unwinder.get_stack_trace()
-                    for thread in interpreter.threads
-                    if thread.thread_id != main_thread.thread_id
-                ]
+                try:
+                    others = [
+                        thread
+                        for interpreter in read_stack(all_unwinder)
+                        for thread in interpreter.threads
+                        if thread.thread_id != main_thread.thread_id
+                    ]
+                except READ_ERRORS:  # the main thread's sample is still good
+                    others = []
                 if not others:
                     skip_threads = NO_THREADS_BACKOFF
             skip_threads -= 1
@@ -255,15 +294,18 @@ def sample(pid: int, main_unwinder, all_unwinder, *, writer: StackWriter, contro
                 test_samples += 1
         except ProcessLookupError:
             return
-        except (RuntimeError, UnicodeDecodeError, MemoryError, OSError):
+        except READ_ERRORS as e:
             # Failures only count once sampling works again: a process that died (a zombie until its parent
-            # reaps it) fails every sample until it's gone
+            # reaps it) fails every sample until it's gone. They weigh what the sample would have.
+            message = error_message(e)
+            failed[message] = failed.get(message, 0) + weight
             failures += 1
             if failures % GONE_CHECK == 0 and gone(pid):
                 return
         else:
-            writer.failed += failures
-            failures = 0
+            if failures:
+                writer.add_failed(failed)
+                failures, failed = 0, {}
         writer.maybe_flush()
         # Don't make up missed samples in a burst: a sample stands for its interval either way
         next_time = max(next_time + interval, time.perf_counter() - interval)
