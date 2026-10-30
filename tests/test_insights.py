@@ -5,6 +5,7 @@ import pytest
 
 from flakytest.profiling.analysis import build_profile
 from flakytest.profiling.plugin import _testpaths
+from flakytest.report import text
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
 SITE = "/venv/lib/python3.15/site-packages"
@@ -238,3 +239,25 @@ def test_the_plugin_records_the_collection_settings(pytester):
     pytester.makeini("[pytest]\ntestpaths = tests\n")
     config = pytester.parseconfig()
     assert _testpaths(config) == ["tests"]
+
+
+def test_a_garbage_collection_pause_is_a_one_off_from_where_it_allocated(tmp_path):
+    """A trivial test that happened to set off a 3s collection isn't the slowest test, and the collection comes
+    from the allocation that set it off, not from the conftest hook that wraps every test."""
+    (tmp_path / "conftest.py").write_text("def pytest_runtest_call(item):\n    yield\n")
+    paused, slow = "tests/test_a.py::test_trivial", "tests/test_b.py::test_slow"
+    hook = (str(tmp_path / "conftest.py"), "pytest_runtest_call", 2)
+    query = (f"{SITE}/django/db/models/query.py", "__iter__", 5)
+    stacks = [
+        (phase_stack(paused, "call", hook, query, ("~", "<GC>", 0)), 3000),
+        (phase_stack(slow, "call", hook, query), 2000),
+    ]
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", stacks)
+    tests = [record(paused, call=3.0), record(slow, call=2.0)]
+    doc = build_profile(run_info(), [process(tests, samples, sampled_seconds=5.0)], tmp_path, {})
+    by_id = {t["nodeid"]: t for t in doc["tests"]}
+    assert by_id[paused]["warmup"]["causes"] == [{"what": "a garbage collection pause", "seconds": 3.0}]
+    assert [t["nodeid"] for t in text.slowest(doc["tests"], 2)] == [slow, paused]
+    gc = next(i for i in doc["insights"] if i["id"] == "gc")
+    assert [location["location"] for location in gc["locations"]] == ["django/db/models/query.py:5"]
+    assert "(2 here)" in gc["summary"]

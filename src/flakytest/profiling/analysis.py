@@ -57,6 +57,8 @@ SUITE_MIN_SHARE = 0.0002
 WARMUP_MIN = 0.5
 WARMUP_FACTOR = 10
 WARMUP_IMPORTS_MIN = 0.05
+# A garbage collection pause this long in one test is the collector's cost, paid by whichever test triggered it
+GC_PAUSE_MIN = 0.5
 # A sampler that stopped writing this much before its process stopped it (seconds, or share of the run) stopped early
 STOPPED_EARLY = 5.0
 STOPPED_EARLY_SHARE = 0.1
@@ -231,6 +233,16 @@ class Tree:
                 source = self._sources[frame] = source_line(raw[0], raw[2]) if leaf.kind != "native" else ""
             category = self._categories[node] = resolve(self.state[node], leaf, self.hints[frame], source)
         return category
+
+    def allocating(self, node: int) -> int:
+        """The output frame of the first non-native frame at or above a node (-1 without one)."""
+        nodes = self.samples.nodes
+        while node >= 0 and not self.is_marker[node]:
+            frame = nodes[node][1]
+            if self.frames[frame].kind != "native":
+                return self.out_frame(frame)
+            node = nodes[node][0]
+        return -1
 
     def matcher_bits(self, node: int) -> int:
         bits = self.mask[node]
@@ -436,7 +448,10 @@ class PartBuilder:
                     line = hot_lines[location] = {"frame": location, "seconds": 0.0, "categories": Counter()}
                 line["seconds"] += seconds
                 line["categories"][category] += seconds
-            matched["category:" + category].add(nodeid, location, category, seconds)
+            # A collection runs wherever an allocation crossed the threshold: that's where it's from, not the
+            # project frame (often a conftest hook wrapping every test) far above it
+            where = tree.allocating(node) if category == "gc" else location
+            matched["category:" + category].add(nodeid, where, category, seconds)
             bits = tree.matcher_bits(node)
             while bits:
                 low = bits & -bits
@@ -584,7 +599,7 @@ class PartBuilder:
 
     def _warmup(self, tests: list[dict[str, Any]]) -> None:
         """One-off costs a test happened to pay: the first, much slower call of a fixture in its process (starting
-        something every later call reuses), and imports."""
+        something every later call reuses), imports, and long garbage collection pauses."""
         causes: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
         worker = self.process.get("worker")
         where = f" in {worker}" if worker else ""
@@ -601,6 +616,9 @@ class PartBuilder:
             imports = test["categories"].get("imports", 0.0)
             if imports >= WARMUP_IMPORTS_MIN:
                 causes[test["nodeid"]].append({"what": "imports", "seconds": r(imports)})
+            collecting = test["categories"].get("gc", 0.0)
+            if collecting >= GC_PAUSE_MIN:
+                causes[test["nodeid"]].append({"what": "a garbage collection pause", "seconds": r(collecting)})
         for test in tests:
             found = causes.get(test["nodeid"])
             if found:

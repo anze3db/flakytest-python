@@ -404,8 +404,9 @@ def one_off_markdown(profile: dict[str, Any], top: int) -> list[str]:
         "## One-off costs",
         "",
         (
-            f"{fmt(total)} in {plural(len(paying), 'test')} goes to warming up: the first call of a fixture in a "
-            "process, and imports. Whichever test runs first pays it, so it's left out of the slowest tests above."
+            f"{fmt(total)} in {plural(len(paying), 'test')} goes to one-off costs: the first call of a fixture in a "
+            "process, imports, and long garbage collection pauses. Whichever test happens to run then pays it, so "
+            "it's left out of the slowest tests above."
         ),
         "",
         "| Test | One-off | What |",

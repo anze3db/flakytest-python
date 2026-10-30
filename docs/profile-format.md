@@ -189,7 +189,8 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       // per phase, [stack index, estimated seconds] of those threads' samples
       "thread_stacks": {"call": [[41, 2.2], …]},
       // one-off costs this test paid for whichever test runs first: a fixture's first call in its process that was
-      // much slower than its other calls (over 0.5 s and 10x the median), and imports
+      // much slower than its other calls (over 0.5 s and 10x the median), imports, and garbage collection pauses
+      // over 0.5 s (the collector's cost, which whichever test sets it off pays)
       "warmup": {"seconds": 4.6, "causes": [{"what": "first mock_aws_services call in gw2", "seconds": 4.6}]},
       // the test process's resident memory (bytes): RSS when the test started and ended, the peak while it ran,
       // and private memory (RssAnon on Linux); keys that couldn't be measured are left out, see Memory below

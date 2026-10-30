@@ -694,13 +694,18 @@ def garbage_collection(profile: Profile) -> Iterator[dict[str, Any]]:
     matched = profile.in_category("gc")
     if not worth_it(matched.seconds, profile, 1.0, 0.03):
         return
+    workers = profile.doc["run"].get("workers") or 1
+    per_process = len(profile.tests) / workers
     yield insight(
         profile,
         "gc",
         "The garbage collector is a noticeable share of test time",
         category="gc",
         impact=matched.seconds * 0.6,
-        summary=f"Garbage collection pauses take {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}).",
+        summary=f"Garbage collection pauses take {fmt(matched.seconds)} ({pct(matched.seconds, profile.test_time)}). "
+        f"Each collection scans what the process has kept so far, so this grows with the tests per process "
+        f"({per_process:,.0f} here): with more workers it's less, and the saving is at most this much. The places "
+        "listed are where allocations set off a collection.",
         fix=f"{GC_FREEZE_WHERE[runner(profile)]}, call gc.freeze() after imports and setup so "
         "long-lived objects are never scanned again, and raise the first-generation threshold, e.g. "
         "gc.set_threshold(50_000, 50, 100).",
