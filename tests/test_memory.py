@@ -90,6 +90,19 @@ def test_meter_measures_each_test_on_its_own():
     assert big["private_start"] > 0 and "at" in big
 
 
+def test_memory_read_back_from_swap_is_not_needed_or_kept(monkeypatch):
+    """A garbage collection pause that swaps the heap back in: 1.5 GB more resident, nothing allocated."""
+    meter = MemoryMeter()
+    meter.source = "linux"
+    meter.clear_fd = None
+    before = {"rss": 400 * MB, "peak": 400 * MB, "private": 1800 * MB, "swap": 1500 * MB}
+    after = {"rss": 1900 * MB, "peak": 1900 * MB, "private": 1800 * MB, "swap": 0}
+    readings = iter([before, after])
+    monkeypatch.setattr(meter, "_read", lambda: next(readings))
+    used = meter.stop(meter.start())
+    assert (used["peak_increase"], used["growth"]) == (0, 0)
+
+
 def test_meter_without_a_resettable_peak(monkeypatch):
     meter = MemoryMeter()
     meter.source = "maxrss"

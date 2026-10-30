@@ -193,7 +193,7 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       // over 0.5 s (the collector's cost, which whichever test sets it off pays)
       "warmup": {"seconds": 4.6, "causes": [{"what": "first mock_aws_services call in gw2", "seconds": 4.6}]},
       // the test process's resident memory (bytes): RSS when the test started and ended, the peak while it ran,
-      // and private memory (RssAnon on Linux); keys that couldn't be measured are left out, see Memory below
+      // and private memory (RssAnon + VmSwap on Linux); keys that couldn't be measured are left out, see Memory below
       "memory": {"at": 12.31, "start": 104857600, "end": 106954752, "peak": 524288000,
                  "peak_increase": 419430400, "growth": 2097152,
                  "private_start": 89128960, "private_end": 91226112,
@@ -310,11 +310,12 @@ test isn't counted as kept. `peak_increase` is how much memory the test needed a
 
 * **Linux**: the kernel's peak counter (`VmHWM`) is reset before every test by writing `5` to
   `/proc/self/clear_refs`, so every test gets its own peak. What a test needed and kept is private memory
-  (`RssAnon`): resident memory also counts file pages (the interpreter, libraries, mapped files) that the kernel
-  drops and reads back as it likes, especially in a memory-limited container. The peak counter only exists for
-  resident memory as a whole, so `peak_increase` is the peak less the larger of the file-backed memory the test
-  started and ended with, less the private memory it started with. Private memory leaves out what every process
-  maps, so processes can be added up for `machine_peak`.
+  (`RssAnon`, plus what of it was swapped out, `VmSwap`): resident memory also counts file pages (the interpreter,
+  libraries, mapped files) that the kernel drops and reads back as it likes, especially in a memory-limited
+  container. The peak counter only exists for resident memory as a whole, so `peak_increase` is the peak less the
+  larger of the file-backed memory the test started and ended with, less the resident private memory it started
+  with, less what it read back from swap (a long garbage collection pause scans, and so swaps in, the whole heap).
+  Private memory leaves out what every process maps, so processes can be added up for `machine_peak`.
 * Class, module and session fixtures restart a test's window when they finish: the private memory they keep is
   recorded on the fixture (`fixtures[].memory`), not charged to the test that happened to run them first. The first
   test in each process and class is flagged (`memory.warmup`); reports leave them, and tests that set up a shared

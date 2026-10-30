@@ -7,6 +7,10 @@ especially in a memory-limited container, which would show up as tests "needing"
 The peak counter only exists for resident memory as a whole, so a test's private peak is estimated as its peak less
 the larger of the file-backed memory it started and ended with.
 
+Private memory that was swapped out still belongs to the process (VmSwap), so it counts as private. When a test reads
+it back in (a garbage collection pause scans the whole heap), the resident peak goes up without the test allocating
+anything: what came back from swap isn't counted as needed.
+
 A test's window starts before its setup and ends when the next test starts, so what pytest frees after a test
 isn't counted as kept. Class, module and session fixtures restart the window when they finish: the memory they keep
 belongs to them (it's recorded on the fixture), not to the test that happened to run them first.
@@ -116,8 +120,11 @@ class MemoryMeter:
         if peak is not None:
             result["peak"] = max(peak, start or 0, end or 0)
             if private_start is not None and private_end is not None and start is not None and end is not None:
-                files = max(start - private_start, end - private_end)
-                result["peak_increase"] = max(0, result["peak"] - files - private_start)
+                swap_start, swap_end = started.get("swap") or 0, reading.get("swap") or 0
+                resident_start, resident_end = private_start - swap_start, private_end - swap_end
+                files = max(start - resident_start, end - resident_end)
+                swapped_in = max(0, swap_start - swap_end)
+                result["peak_increase"] = max(0, result["peak"] - files - resident_start - swapped_in)
             elif start is not None:
                 result["peak_increase"] = result["peak"] - start
         if private_start is not None and private_end is not None:
@@ -132,10 +139,12 @@ class MemoryMeter:
                 text = os.pread(self.status_fd, 4096, 0)  # type: ignore[arg-type]
             except OSError:
                 return {}
+            anonymous, swap = field(text, b"\nRssAnon:"), field(text, b"\nVmSwap:") or 0
             return {
                 "rss": field(text, b"\nVmRSS:"),
                 "peak": field(text, b"\nVmHWM:"),
-                "private": field(text, b"\nRssAnon:"),
+                "private": anonymous + swap if anonymous is not None else None,
+                "swap": swap,
             }
         if self.source == "psutil":
             info = psutil.Process().memory_info()
