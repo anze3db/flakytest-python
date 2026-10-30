@@ -185,3 +185,24 @@ def test_a_big_suite_says_the_rate_it_was_sampled_at(tmp_path):
     assert (run["profiler"]["rate"], run["profiler"]["sampling_rate"]) == (1000, 500)
     doc = merge(run, [part], tmp_path, {})
     assert "tachyon @ 500 Hz" in text.headline(doc)
+
+
+def test_cpu_contention_is_reported(tmp_path):
+    """8 workers and their profilers on 10 performance cores: sampling at 1000 Hz cost the tests 15%."""
+    parts = []
+    for worker in range(2):
+        nodeid = f"tests/test_{worker}.py::test_it"
+        samples = write_tachyon_samples(tmp_path / f"samples-{worker}.json", [(phase_stack(nodeid, "call"), 100)])
+        extra = {"pid": worker, "worker": f"gw{worker}", "sampler_cpu": 30.0, "load_peak": 13.2}
+        parts.append(
+            build_part(process([record(nodeid, call=1.0)], samples, sampled_seconds=0.1, **extra), tmp_path, 0)
+        )
+    run = run_info(duration=100.0, workers=8, cpu_count=14)
+    run["platform"] |= {"system": "Darwin", "usable_cpus": 10}
+    doc = merge(run, parts, tmp_path, {})
+    warning = next(w for w in doc["warnings"] if w["code"] == "cpu_contention")
+    assert warning["message"].startswith("The load average reached 13.2 on 10 performance cores")
+    assert "The 2 profilers used 0.6 CPUs" in warning["message"]
+    assert "--flakytest-rate 500) or run fewer workers (-n 6)" in warning["message"]
+    run["platform"]["usable_cpus"] = 16
+    assert "cpu_contention" not in [w["code"] for w in merge(run, parts, tmp_path, {})["warnings"]]

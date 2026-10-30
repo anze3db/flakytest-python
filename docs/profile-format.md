@@ -79,6 +79,8 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
     "python": {"version": "3.15.0", "implementation": "CPython"},
     "platform": {
       "system": "Linux", "release": "6.8.0", "machine": "x86_64", "cpu_count": 8,
+      "usable_cpus": 4,                  // when fewer can run tests at full speed: Apple silicon's performance
+                                         // cores, the CPUs the process may use, the container's CPU limit
       "memory": 8589934592              // bytes the tests can use: the container's limit, else the machine's
     },
     "environment": {
@@ -288,6 +290,8 @@ Every sample below a marker is assigned exactly one category from its frames:
 * `profiler_unavailable` — no sampling profiler could attach; durations, fixtures and query counts are
   still exact, but there are no stacks.
 * `sample_errors` — the profiler failed to read a large share of samples (over 10%), and the most common reason.
+* `cpu_contention` — the machine's load average went over its (usable) CPUs while tests ran, so the profile's
+  test times are longer than unprofiled ones; says how many CPUs the profilers used (`profiler_cpus`).
 * `missing_workers` — pytest-xdist workers crashed (`workers` lists them). Their recorded tests are in the
   profile; tests they didn't record have only exact durations and outcomes. When the workers together needed most
   of the machine's memory, it says they probably ran out of it and how many workers would fit. In the report of a

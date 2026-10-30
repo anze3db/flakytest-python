@@ -14,6 +14,11 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    import resource
+except ImportError:  # Windows
+    resource = None  # type: ignore[assignment]
+
 PR_SET_PTRACER = 0x59616D61
 START_TIMEOUT = 15.0
 STOP_TIMEOUT = 120.0
@@ -66,6 +71,13 @@ def allow_tracing_by(pid: int) -> None:
         libc.prctl(PR_SET_PTRACER, ctypes.c_ulong(pid), 0, 0, 0)
 
 
+def children_cpu() -> float | None:
+    if resource is None:
+        return None
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return usage.ru_utime + usage.ru_stime
+
+
 class Sampler:
     def __init__(self, backend: str, rate: int, out_dir: Path) -> None:
         self.backend = backend
@@ -81,6 +93,7 @@ class Sampler:
         self.error: str | None = None
         self.started_at = 0.0
         self.stopped_at = 0.0
+        self.cpu_seconds: float | None = None  # the CPU time the profiler used, once it has stopped
 
     def start(self) -> bool:
         ready = self.out.with_suffix(".ready")
@@ -177,8 +190,12 @@ class Sampler:
         self.stopped_at = time.perf_counter()
         if self.process.poll() is None:
             self.process.send_signal(signal.SIGINT)
+        before = children_cpu()
         try:
             self.process.wait(timeout=STOP_TIMEOUT)
+            # Reaping the profiler adds its CPU time to our children's: the test process has no others then
+            if before is not None and (after := children_cpu()) is not None:
+                self.cpu_seconds = after - before
         except subprocess.TimeoutExpired:
             self.process.kill()
             self.error = f"{self.backend} did not finish writing samples within {STOP_TIMEOUT:.0f}s"

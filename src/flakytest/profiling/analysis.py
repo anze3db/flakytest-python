@@ -62,6 +62,8 @@ GC_PAUSE_MIN = 0.5
 # A sampler that stopped writing this much before its process stopped it (seconds, or share of the run) stopped early
 STOPPED_EARLY = 5.0
 STOPPED_EARLY_SHARE = 0.1
+# A load average this much above the CPUs means tests waited for one
+BUSY_LOAD = 1.1
 # tachyon's errors for a stack that changed while it was read
 TORN_READS = ("Failed to parse initial frame", "Unhandled frame owner", "Incomplete sample", "process_vm_readv failed")
 # The session timeline can't add up to more than the processes' wall clock: allow for rounding and clock skew
@@ -382,6 +384,8 @@ class PartBuilder:
             "samples_complete": samples.complete if samples is not None else True,
             "sampler_stopped_at": r(stopped_at) if stopped_at is not None else None,
             "sampled_seconds": r(process.get("sampled_seconds") or 0.0),
+            "sampler_cpu": process.get("sampler_cpu"),
+            "load_peak": process.get("load_peak"),
             "frames": out.frames,
             "stacks": out.nodes,
             "stack_categories": {str(k): v for k, v in out.categories.items()},
@@ -688,6 +692,7 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     matched: dict[str, Matched] = defaultdict(Matched)
     total_samples = sample_errors = 0
     error_kinds: Counter[str] = Counter()
+    load_peak, sampler_cpu, samplers = 0.0, 0.0, 0
     incomplete = []
     stopped: list[tuple[str, float, float]] = []  # (worker, stopped at, sampled seconds) of samplers that stopped early
     for part in parts:
@@ -740,6 +745,10 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
         total_samples += part["samples"]
         sample_errors += part["sample_errors"]
         error_kinds.update(part.get("sample_error_kinds", {}))
+        load_peak = max(load_peak, part.get("load_peak") or 0.0)
+        if part.get("sampler_cpu") is not None:
+            sampler_cpu += part["sampler_cpu"]
+            samplers += 1
         if part["backend"] != "none" and not part.get("samples_complete", True):
             incomplete.append(part.get("worker") or "main")
         if part.get("sampler_stopped_at") is not None:
@@ -778,6 +787,8 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
                 "left out of the report.",
             }
         )
+    if contention := _contention_warning(run, load_peak, sampler_cpu, samplers):
+        warnings.append(contention)
     if growth := memory.growth_warning(summary["memory"], tests):
         warnings.append(growth)
     if incomplete:
@@ -958,6 +969,35 @@ def _warnings(
             }
         )
     return warnings
+
+
+def _contention_warning(
+    run: dict[str, Any], load_peak: float, sampler_cpu: float, samplers: int
+) -> dict[str, Any] | None:
+    """Tests that waited for a CPU took longer than they would unprofiled: more so the more the profilers took."""
+    platform = run.get("platform") or {}
+    cpus = platform.get("usable_cpus") or platform.get("cpu_count")
+    duration = run.get("duration") or 0.0
+    if not (samplers and cpus and duration) or load_peak <= cpus * BUSY_LOAD:
+        return None
+    cores = sampler_cpu / duration
+    kind = "performance cores" if platform.get("system") == "Darwin" and platform.get("usable_cpus") else "CPUs"
+    rate = run["profiler"].get("sampling_rate") or run["profiler"]["rate"]
+    workers = run.get("workers") or 1
+    fewer = f" or run fewer workers (-n {max(1, math.floor(workers * cpus / load_peak))})" if workers > 1 else ""
+    return {
+        "code": "cpu_contention",
+        "message": f"The load average reached {load_peak:.1f} on {cpus:g} {kind}, so tests waited for a CPU and took "
+        f"longer than they would without profiling. The {plural_profilers(samplers)} used {cores:.1f} CPUs of "
+        f"that, at {rate} Hz. For test times closer to an unprofiled run, sample less often (--flakytest-rate "
+        f"{max(50, rate // 2)}){fewer}.",
+        "load_peak": load_peak,
+        "profiler_cpus": round(cores, 2),
+    }
+
+
+def plural_profilers(count: int) -> str:
+    return "profiler" if count == 1 else f"{count} profilers"
 
 
 def _sample_error_reason(profiler: dict[str, Any]) -> str:

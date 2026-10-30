@@ -11,6 +11,7 @@ from typing import Any
 
 # A container's memory limit: cgroup v2, then v1 (which says "no limit" with a huge number)
 CGROUP_MEMORY_LIMITS = ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes")
+CGROUP_CPU_LIMIT = "/sys/fs/cgroup/cpu.max"
 
 GIT_LOG_FORMAT = {
     "commit_hash": "%H",
@@ -119,8 +120,29 @@ def platform_info() -> dict[str, Any]:
         "release": platform.release(),
         "machine": platform.machine(),
         "cpu_count": os.cpu_count() or 1,
+        "usable_cpus": usable_cpus(),
         "memory": machine_memory(),
     }
+
+
+def usable_cpus() -> float | None:
+    """The CPUs tests can keep busy at full speed, when that's fewer than cpu_count: the performance cores of Apple
+    silicon, the CPUs this process may run on, or the container's CPU limit."""
+    counts: list[float] = []
+    if sys.platform == "darwin":
+        with contextlib.suppress(OSError, ValueError, subprocess.SubprocessError):
+            output = subprocess.run(
+                ["sysctl", "-n", "hw.perflevel0.logicalcpu"], capture_output=True, text=True, timeout=2, check=True
+            ).stdout
+            counts.append(int(output))
+    with contextlib.suppress(AttributeError, OSError):
+        counts.append(len(os.sched_getaffinity(0)))
+    with contextlib.suppress(OSError, ValueError):  # cgroup v2: "max 100000" without a limit
+        quota, period = Path(CGROUP_CPU_LIMIT).read_text().split()
+        if quota != "max":
+            counts.append(int(quota) / int(period))
+    usable = min(counts) if counts else None
+    return round(usable, 2) if usable is not None and usable < (os.cpu_count() or 1) else None
 
 
 def machine_memory() -> int | None:

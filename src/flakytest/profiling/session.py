@@ -143,6 +143,7 @@ class Session:
         self.django_debug: bool | None = None
         self.tests_file: Any = None
         self.saved_at = 0.0
+        self.load_peak = 0.0  # the machine's highest 1-minute load average while tests ran
         self.facts: Background | None = None
         # What the process that started the workers knows about every test (pytest-xdist reports), and the workers
         # that crashed
@@ -206,6 +207,8 @@ class Session:
             "samples_file": str(sampler.out) if sampler else None,
             "sampler_pid": sampler.process.pid if sampler and sampler.process else None,
             "sampled_seconds": (sampler.stopped_at or time.perf_counter()) - sampler.started_at if sampler else 0.0,
+            "sampler_cpu": sampler.cpu_seconds if sampler else None,
+            "load_peak": round(self.load_peak, 2) or None,
             "memory_source": self.memory.source,
             "started_at": self.started_at.timestamp(),
         }
@@ -320,6 +323,8 @@ class Session:
                 if (now := time.monotonic()) - self.saved_at >= SAVE_EVERY:
                     self.tests_file.flush()
                     self.saved_at = now
+                    with contextlib.suppress(OSError, AttributeError):  # no load average on Windows
+                        self.load_peak = max(self.load_peak, os.getloadavg()[0])
 
     def finish(self, exit_status: str, context: dict[str, Any] | None = None) -> None:
         """At the end of the session: this process's part of the profile, then (unless it's a worker) the profile."""

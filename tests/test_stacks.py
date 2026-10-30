@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from flakytest.profiling.markers import MARKER_FILENAME
+from flakytest.profiling.samplers import Sampler
 from flakytest.profiling.stacks import read_samples
 from tests.helpers import write_tachyon_samples
 
@@ -104,3 +105,11 @@ def test_tachyon_sampler_retries_a_read_that_caught_the_stack_changing():
     assert len(attempts) == 3
     error = RuntimeError("process_vm_readv failed for PID 12 at address 0x7f3a (size 8, partial read 0 bytes): Bad")
     assert tachyon_sampler.error_message(error) == "process_vm_readv failed for PID N at address N: Bad"
+
+
+def test_a_sampler_knows_the_cpu_its_profiler_used(tmp_path):
+    sampler = Sampler("py-spy", 100, tmp_path)
+    sampler.process = subprocess.Popen([sys.executable, "-c", "sum(range(10**7))"])
+    sampler.out.write_text("")
+    sampler.stop()
+    assert sampler.cpu_seconds > 0
