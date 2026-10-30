@@ -806,18 +806,29 @@ def n_plus_one(profile: Profile) -> Iterator[dict[str, Any]]:
 def database_server(profile: Profile) -> Iterator[dict[str, Any]]:
     engines = " ".join(django(profile).get("databases", []))
     connects = profile.through("db_connect")
-    if worth_it(connects.seconds, profile, 0.5, 0.02):
+    # Django's connections are counted: the sampled time only counts when tests really connected
+    opened = {t["nodeid"]: t["db"]["connections"] for t in profile.tests if (t.get("db") or {}).get("connections")}
+    counted = bool(django(profile)) and any(t.get("db") for t in profile.tests)
+    if worth_it(connects.seconds, profile, 0.5, 0.02) and (opened or not counted):
+        summary = f"Connecting to the database takes {fmt(connects.seconds)}"
+        evidence = []
+        if opened:
+            total = sum(opened.values())
+            summary += f": {plural(len(opened), 'test')} opened {plural(total, 'new connection')}"
+            evidence = [f"{count}x in {nodeid}" for nodeid, count in top(opened, 5)]
         yield insight(
             profile,
             "db-connections",
             "Tests open new database connections over and over",
             category="db",
             impact=connects.seconds * 0.8,
-            summary=f"Connecting to the database takes {fmt(connects.seconds)}.",
+            summary=summary + ".",
             fix="Reuse connections: create the engine once per session (not per test) and keep the default pool "
             "(NullPool reconnects on every checkout); in Django avoid closing connections in tests "
             "(connection.close()/close_old_connections).",
             matched=connects,
+            tests=[nodeid for nodeid, _ in top(opened, MAX_TESTS)] if opened else None,
+            evidence=evidence,
         )
     if not ("postgresql" in engines or "mysql" in engines):
         return

@@ -249,7 +249,7 @@ class Session:
         self.queries.current = None
         self.current = None
         stats = self.current_queries
-        if stats is not None and stats.queries:
+        if stats is not None and (stats.queries or stats.connections):
             record["db"] = stats.as_dict()
         self.current_queries = None
         record["duration"] = sum(record["phases"].values())

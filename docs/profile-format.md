@@ -183,7 +183,8 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       // commits and writes outside a transaction (each one commits on its own): what durability costs
       "db": {"queries": 31, "time": 0.42,
              "duplicates": [{"sql": "SELECT … FROM \"orders_item\" WHERE \"order_id\" = %s", "count": 12}],
-             "commits": 0, "commit_time": 0.0, "autocommit_writes": 2, "autocommit_write_time": 0.004},
+             "commits": 0, "commit_time": 0.0, "autocommit_writes": 2, "autocommit_write_time": 0.004,
+             "connections": 1},            // new Django connections it opened; absent when none
       // other threads that worked while this test's main thread waited (tachyon only): how many, and what they
       // did, which the categories above count instead of the waiting
       "threads": {"count": 4, "seconds": 6.1, "categories": {"network": 3.7, "serialization": 1.8}},

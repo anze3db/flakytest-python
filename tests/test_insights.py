@@ -277,3 +277,19 @@ def test_inherited_tests(tmp_path):
     assert inherited["summary"].startswith("9 tests run because their class inherits them from another class (9.0s)")
     assert inherited["evidence"] == ["apps.mcp.tests.ToolChecks: 3 tests run again in 3 classes, 9.0s"]
     assert "__test__ = False" in inherited["fix"]
+
+
+@pytest.mark.parametrize("connections", [0, 3])
+def test_db_connections_only_when_django_tests_connected(tmp_path, connections):
+    """The sampled connect time said "saves 37s" on a suite whose tests (as Django counts them) hardly connected."""
+    nodeid = "tests/test_db.py::test_it"
+    connect = (f"{SITE}/django/db/backends/base/base.py", "connect", 1)
+    test = record(nodeid, call=1.0)
+    test["db"] = {"queries": 3, "time": 0.1, "duplicates": []} | ({"connections": connections} if connections else {})
+    doc = build(tmp_path, [test], [(phase_stack(nodeid, "call", connect), 900)], {"django": {"databases": []}})
+    found = [i for i in doc["insights"] if i["id"] == "db-connections"]
+    if connections:
+        assert found[0]["evidence"] == [f"3x in {nodeid}"]
+        assert "1 test opened 3 new connections" in found[0]["summary"]
+    else:
+        assert not found

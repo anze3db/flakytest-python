@@ -45,6 +45,7 @@ class QueryStats:
     commit_time: float = 0.0
     autocommit_writes: int = 0
     autocommit_write_time: float = 0.0
+    connections: int = 0  # new database connections the test opened (Django)
     measures_commits: bool = False
 
     def add(self, sql: str, duration: float, source: str = "django") -> None:
@@ -71,6 +72,8 @@ class QueryStats:
             if count >= DUPLICATE_THRESHOLD
         ][:5]
         result: dict[str, Any] = {"queries": self.queries, "time": round(self.time, 6), "duplicates": duplicates}
+        if self.connections:
+            result["connections"] = self.connections
         if self.measures_commits:
             result |= {
                 "commits": self.commits,
@@ -109,7 +112,7 @@ class QueryTracker:
             signals = importlib.import_module("django.db.backends.signals")
         except Exception:
             return False
-        signals.connection_created.connect(self._on_django_connection, weak=False)
+        signals.connection_created.connect(self._on_django_connection_created, weak=False)
         return True
 
     def _wrap_django_connections(self) -> None:
@@ -120,6 +123,11 @@ class QueryTracker:
             initialized = [connections[alias] for alias in connections]
         for connection in initialized:
             self._on_django_connection(connection=connection)
+
+    def _on_django_connection_created(self, connection: Any = None, **_: Any) -> None:
+        if self.current is not None:
+            self.current.connections += 1
+        self._on_django_connection(connection)
 
     def _on_django_connection(self, connection: Any = None, **_: Any) -> None:
         wrappers = getattr(connection, "execute_wrappers", None)

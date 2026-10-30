@@ -290,3 +290,27 @@ def test_unittest_records_inherited_tests(pytester):
         "test_things.py::TestB::test_own": "test_things.TestA.test_own",
         "test_things.py::TestB::test_shared": "test_things.Checks.test_shared",
     }
+
+
+CONNECTING_TESTS = """
+from django.db import connections
+from django.test import TestCase
+
+
+class TestConnections(TestCase):
+    def test_connects(self):
+        for _ in range(2):
+            connection = connections.create_connection("default")
+            connection.ensure_connection()
+            connection.close()
+
+    def test_reuses(self):
+        connections["default"].ensure_connection()
+"""
+
+
+def test_django_counts_new_connections(pytester):
+    django_project(pytester, CONNECTING_TESTS)
+    assert run_python(pytester, "manage.py", "test", "app").ret == 0
+    tests = {t["name"]: t.get("db") or {} for t in latest(pytester)["tests"]}
+    assert (tests["test_connects"].get("connections"), tests["test_reuses"].get("connections")) == (2, None)
