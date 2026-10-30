@@ -95,6 +95,7 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
     "profiler": {
       "backend": "tachyon",              // "tachyon", "py-spy" or "none"
       "rate": 1000,                      // requested samples per second
+      "sampling_rate": 500,              // what tests were sampled at (lower than rate on big suites)
       "samples": 81234,                  // samples captured (all processes), counted at the requested rate
       "sample_errors": 1200,             // samples that couldn't be read, counted the same way
       "sample_error_kinds": {"Failed to parse initial frame in chain": 1200},  // why, at most 5 (tachyon only)

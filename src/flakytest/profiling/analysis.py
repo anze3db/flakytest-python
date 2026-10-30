@@ -358,6 +358,7 @@ class PartBuilder:
             "worker": process.get("worker"),
             "backend": process["backend"],
             "rate": process["rate"],
+            "sampling_rate": process.get("sampling_rate") or process["rate"],
             "backend_error": process.get("backend_error"),
             "memory_source": process.get("memory_source"),
             "context": process.get("context", {}),
@@ -880,7 +881,7 @@ def _warnings(
                 "samples. Their durations, fixture times, queries and memory are exact.",
             }
         )
-    rate = profiler["rate"]
+    rate = profiler.get("sampling_rate") or profiler["rate"]
     interval = 1 / rate if rate else 0.001
     test_time = sum(t["duration"] for t in tests) or 1.0
     missed = [t for t in tests if "undersampled" in t["warnings"]]

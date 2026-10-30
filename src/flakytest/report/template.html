@@ -558,6 +558,7 @@ function whyText(t) {
   return parts.join(" · ");
 }
 // Without what other tests share (class/module/session fixtures) and one-off warm-up
+const sampledAt = () => P.run.profiler.sampling_rate || P.run.profiler.rate;
 const ownTime = t => t.duration - (t.shared_fixture_time || 0) - (t.warmup ? t.warmup.seconds : 0);
 
 function testsTable(list, limit) {
@@ -717,7 +718,7 @@ function renderOverview() {
       <div class="tile"><div class="label">Wall time</div><div class="value">${fmt(run.duration)}</div><div class="hint">start to finish</div></div>
       <div class="tile"><div class="label">Test time</div><div class="value">${fmt(total)}</div><div class="hint">sum of setup + call + teardown</div></div>
       <div class="tile"><div class="label">Outcomes</div><div class="value">${s.passed.toLocaleString()} <span style="font-size:14px;color:var(--good-ink)">passed</span></div><div class="hint">${s.failed} failed · ${s.errors} errors · ${s.skipped} skipped</div></div>
-      <div class="tile"><div class="label">Samples</div><div class="value">${run.profiler.samples.toLocaleString()}</div><div class="hint">${run.profiler.backend === "none" ? "no profiler" : `${esc(run.profiler.backend)} @ ${run.profiler.rate} Hz`}</div></div>
+      <div class="tile"><div class="label">Samples</div><div class="value">${run.profiler.samples.toLocaleString()}</div><div class="hint">${run.profiler.backend === "none" ? "no profiler" : `${esc(run.profiler.backend)} @ ${sampledAt()} Hz`}</div></div>
       ${s.memory && s.memory.peak ? `<div class="tile"><div class="label">Peak memory</div><div class="value">${bytes(s.memory.processes.length > 1 && s.memory.machine_peak ? s.memory.machine_peak : s.memory.peak)}</div><div class="hint">${s.memory.processes.length > 1 ? `${s.memory.processes.length} workers together` : "test process"}</div></div>` : ""}
     </div>
     <h2>Session timeline</h2>
@@ -775,7 +776,7 @@ function renderTest(t) {
   const agg = aggregate([t]);
   const samples = agg.samples;
   const related = P.insights.filter(i => (i.tests || []).includes(t.nodeid));
-  const warn = t.warnings.length ? `<div class="warn">${samples === 0 ? "This test got no samples" : `Only ${samples} samples`} at ${P.run.profiler.rate} Hz, so the breakdown below is ${samples === 0 ? "missing" : "rough"}. Rerun it with <code>--flakytest-rate ${Math.min(20000, P.run.profiler.rate * 5)}</code> for detail.</div>` : "";
+  const warn = t.warnings.length ? `<div class="warn">${samples === 0 ? "This test got no samples" : `Only ${samples} samples`} at ${sampledAt()} Hz, so the breakdown below is ${samples === 0 ? "missing" : "rough"}. Rerun it with <code>--flakytest-rate ${Math.min(20000, sampledAt() * 5)}</code> for detail.</div>` : "";
   const shared = (t.shared_fixture_time || 0) >= 0.01 ? `<div class="warn" style="border-color:var(--line-strong);background:var(--surface-2)">Includes ${fmt(t.shared_fixture_time)} setting up or tearing down class/module/session fixtures that other tests share.</div>` : "";
   return `
     <h1><span class="dot o-${t.outcome}"></span>${esc(t.class ? t.class + "::" + t.name : t.name)}</h1>
@@ -834,7 +835,7 @@ function markdownFor() {
   const cats = Object.entries(sumCategories(list)).sort((a, b) => b[1] - a[1]);
   const agg = aggregate(list);
   const lines = [`# flakytest: ${g.type === "root" ? "test suite" : g.id}`, "",
-    `${list.length} tests, ${fmt(total)} test time. Run ${P.run.id} on ${P.run.environment.name}, Python ${P.run.python.version}, ${P.run.profiler.backend} @ ${P.run.profiler.rate} Hz.`, "",
+    `${list.length} tests, ${fmt(total)} test time. Run ${P.run.id} on ${P.run.environment.name}, Python ${P.run.python.version}, ${P.run.profiler.backend} @ ${sampledAt()} Hz.`, "",
     "## Where the time goes", ...cats.map(([c, s]) => `- ${catLabel(c)}: ${fmt(s)} (${pct(s, total)})`), ""];
   if (agg.segments.length) lines.push("## Pieces of work", ...agg.segments.slice(0, 8).map(s => `- ${s.phase}: ${s.label} ${fmt(s.seconds)}`), "");
   if (agg.lines.length) lines.push("## Hot lines in project code", ...agg.lines.slice(0, 10).map(l => { const f = frames[l.frame]; return `- ${f[0]}:${f[2]} in ${f[1]} — ${fmt(l.seconds)}${sources[l.frame] ? " — `" + sources[l.frame] + "`" : ""}`; }), "");
@@ -865,7 +866,7 @@ function toast(msg) {
 function init() {
   const run = P.run;
   document.title = `flakytest · ${P.summary.tests} tests · ${fmt(run.duration)}`;
-  document.getElementById("run-meta").textContent = `${run.environment.name} · ${run.id} · ${run.git && run.git.branch ? run.git.branch + " @ " + (run.git.commit_hash || "").slice(0, 8) + (run.git.dirty ? " (dirty)" : "") + " · " : ""}${run.profiler.backend === "none" ? "no profiler" : run.profiler.backend + " " + run.profiler.rate + " Hz"}`;
+  document.getElementById("run-meta").textContent = `${run.environment.name} · ${run.id} · ${run.git && run.git.branch ? run.git.branch + " @ " + (run.git.commit_hash || "").slice(0, 8) + (run.git.dirty ? " (dirty)" : "") + " · " : ""}${run.profiler.backend === "none" ? "no profiler" : run.profiler.backend + " " + sampledAt() + " Hz"}`;
   try { const theme = localStorage.getItem("flakytest-theme"); if (theme) document.documentElement.dataset.theme = theme; } catch (e) { /* storage unavailable */ }
   document.getElementById("theme").addEventListener("click", () => {
     const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;

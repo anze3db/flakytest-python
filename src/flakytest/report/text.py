@@ -84,6 +84,12 @@ def was_sampled(profile: dict[str, Any]) -> bool:
     return not profile["run"]["profiler"].get("failed")
 
 
+def sampling_rate(profile: dict[str, Any]) -> int:
+    """The rate tests were sampled at (big suites are sampled less often than requested)."""
+    profiler = profile["run"]["profiler"]
+    return profiler.get("sampling_rate") or profiler["rate"]
+
+
 def plural(count: int, word: str) -> str:
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
@@ -106,7 +112,7 @@ def headline(profile: dict[str, Any]) -> str:
     run, summary = profile["run"], profile["summary"]
     profiler = run["profiler"]
     sampling = (
-        f"{profiler['backend']} @ {profiler['rate']} Hz, {profiler['samples']:,} samples"
+        f"{profiler['backend']} @ {sampling_rate(profile)} Hz, {profiler['samples']:,} samples"
         if profiler["backend"] != "none"
         else "no sampling profiler"
     )
@@ -494,8 +500,10 @@ def test_report(profile: dict[str, Any], query: str, *, min_share: float = 0.02)
                 f"{work}. That time is counted as their work, not as waiting."
             )
         if "undersampled" in test["warnings"] or "low_samples" in test["warnings"]:
-            rate = profile["run"]["profiler"]["rate"]
-            out.append(f"⚠ Only {samples} samples: rerun with a higher --flakytest-rate (now {rate} Hz) for detail.")
+            out.append(
+                f"⚠ Only {samples} samples: rerun with a higher --flakytest-rate (now {sampling_rate(profile)} Hz) "
+                "for detail."
+            )
     else:
         out.append(f"{len(tests)} tests, {fmt(duration)} in total.")
         out += ["", "| Test | Time | Why |", "|---|---:|---|"]

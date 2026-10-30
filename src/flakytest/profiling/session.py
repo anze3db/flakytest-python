@@ -189,6 +189,8 @@ class Session:
             "worker": self.worker,
             "backend": self.backend,
             "rate": self.rate,
+            # what it sampled tests at: big suites are sampled less often than the sampler started with
+            "sampling_rate": sampler.sampling_rate if sampler else self.rate,
             "backend_error": self.backend_error,
             "samples_file": str(sampler.out) if sampler else None,
             "sampler_pid": sampler.process.pid if sampler and sampler.process else None,
@@ -529,6 +531,7 @@ def describe_run(
         "profiler": {
             "backend": sampled[0]["backend"] if sampled else "none",
             "rate": sampled[0]["rate"] if sampled else rate,
+            "sampling_rate": (sampled[0].get("sampling_rate") or sampled[0]["rate"]) if sampled else rate,
             "samples": 0,
             "error": errors[0] if errors else None,
         },

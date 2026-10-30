@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from flakytest.profiling.analysis import build_profile, rerun_command
+from flakytest.profiling.analysis import build_part, build_profile, merge, rerun_command
+from flakytest.profiling.session import describe_run
 from flakytest.report import text
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
@@ -175,3 +176,12 @@ def test_rerun_command():
         rerun_command("unittest", 200, nodeids[1:])
         == "flakytest python --flakytest-rate 200 -m unittest tests.TestA.test_a"
     )
+
+
+def test_a_big_suite_says_the_rate_it_was_sampled_at(tmp_path):
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", [(phase_stack(FAST, "call"), 1000)])
+    part = build_part(process([record(FAST, call=1.0)], samples, sampled_seconds=1.0, sampling_rate=500), tmp_path, 0)
+    run, _ = describe_run(run_info(), [part], 1000, {})
+    assert (run["profiler"]["rate"], run["profiler"]["sampling_rate"]) == (1000, 500)
+    doc = merge(run, [part], tmp_path, {})
+    assert "tachyon @ 500 Hz" in text.headline(doc)
