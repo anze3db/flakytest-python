@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from flakytest.profiling.samplers import BACKENDS
-from flakytest.profiling.session import Session
+from flakytest.profiling.session import Session, inherited_from
 
 OPTIONS = {
     "--flakytest-rate": "FLAKYTEST_PROFILE_RATE",
@@ -260,7 +260,8 @@ def _begin(session: Session, test: Any) -> dict[str, Any]:
         if current["nodeid"] == nodeid:
             return current
         _end_current(session)
-    return session.begin_test(nodeid, file, cls, name)
+    method = getattr(type(test), getattr(test, "_testMethodName", ""), None)
+    return session.begin_test(nodeid, file, cls, name, inherited_from(type(test), method))
 
 
 def _end_current(session: Session) -> None:

@@ -19,7 +19,14 @@ import pluggy
 import pytest
 
 from flakytest.profiling.samplers import BACKENDS
-from flakytest.profiling.session import BUSY_PY_SPY_RATE, LARGE_SUITE, LARGE_SUITE_RATE, Session, new_record
+from flakytest.profiling.session import (
+    BUSY_PY_SPY_RATE,
+    LARGE_SUITE,
+    LARGE_SUITE_RATE,
+    Session,
+    inherited_from,
+    new_record,
+)
 
 # New-style hook wrappers (pluggy 1.1+) cost less per call than the old style, which pytest 6 still needs. Both
 # run the same code: `return (yield)` hands the result on in the new style and is ignored in the old.
@@ -129,6 +136,7 @@ class ProfilerPlugin:
             nodeid.partition("::")[0],  # like item.location[0] (relative to the rootdir), which costs ~60 µs
             cls.__name__ if cls is not None else None,
             getattr(item, "name", nodeid.rsplit("::", 1)[-1]),
+            inherited_from(cls, getattr(item, "function", None)),
         )
         self.session.fixture_users.update(getattr(item, "fixturenames", ()))
         try:

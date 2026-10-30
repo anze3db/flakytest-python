@@ -66,6 +66,17 @@ def new_record(nodeid: str, file: str, cls: str | None, name: str, worker: str |
     }
 
 
+def inherited_from(cls: type | None, function: Any) -> str | None:
+    """ "module.Base.test_x" for a test method a class inherited from another class, else None."""
+    qualname = getattr(function, "__qualname__", None)
+    if cls is None or not qualname or "." not in qualname:
+        return None
+    owner = qualname.rsplit(".", 1)[0]
+    if owner == cls.__qualname__:
+        return None
+    return f"{getattr(function, '__module__', '?')}.{qualname}"
+
+
 def write_json(path: Path, data: Any) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, separators=(",", ":"), default=str))
@@ -206,8 +217,12 @@ class Session:
         if self.sampler is not None and not self.explicit_rate and count > LARGE_SUITE:
             self.sampler.set_rate(LARGE_SUITE_RATE)
 
-    def begin_test(self, nodeid: str, file: str, cls: str | None, name: str) -> dict[str, Any]:
+    def begin_test(
+        self, nodeid: str, file: str, cls: str | None, name: str, inherited_from: str | None = None
+    ) -> dict[str, Any]:
         record = new_record(nodeid, file, cls, name, self.worker)
+        if inherited_from:
+            record["inherited_from"] = inherited_from
         self.tests[nodeid] = record
         if self.sampler is not None:
             self.sampler.next_test()

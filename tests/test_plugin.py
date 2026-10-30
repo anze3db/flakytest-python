@@ -55,6 +55,7 @@ def test_profile_without_sampler(pytester):
     }
     sleeps = tests["test_suite.py::TestThings::test_sleeps"]
     assert sleeps["class"] == "TestThings"
+    assert "inherited_from" not in sleeps
     assert sleeps["phases"]["call"] >= 0.2
     slow_fixture = next(f for f in sleeps["fixtures"] if f["name"] == "slow_fixture")
     assert slow_fixture["duration"] >= 0.05
@@ -92,3 +93,24 @@ def test_profile_with_sampler(pytester):
     assert sleeps["categories"].get("sleep", 0) >= 0.7
     assert any(segment["label"] == "fixture slow_fixture" for segment in sleeps["segments"]), sleeps["segments"]
     assert any(i["id"] == "sleep" for i in profile["insights"])
+
+
+def test_profile_records_inherited_tests(pytester):
+    pytester.makepyfile(
+        test_suite="""
+class TestBase:
+    def test_shared(self):
+        pass
+
+
+class TestChild(TestBase):
+    pass
+"""
+    )
+    pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none").assert_outcomes(passed=2)
+    _, profile = latest_profile(pytester)
+    tests = {t["nodeid"]: t.get("inherited_from") for t in profile["tests"]}
+    assert tests == {
+        "test_suite.py::TestBase::test_shared": None,
+        "test_suite.py::TestChild::test_shared": "test_suite.TestBase.test_shared",
+    }

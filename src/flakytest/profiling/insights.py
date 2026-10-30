@@ -87,6 +87,10 @@ def plural(count: int, word: str) -> str:
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
+def classes(count: int) -> str:
+    return f"{count} class" if count == 1 else f"{count} classes"
+
+
 def pct(seconds: float, total: float) -> str:
     return f"{seconds / total:.0%}" if total else "n/a"
 
@@ -1053,6 +1057,54 @@ def async_loops(profile: Profile) -> Iterator[dict[str, Any]]:
         if pytest
         else "https://docs.python.org/3/library/unittest.html#unittest.IsolatedAsyncioTestCase",
         matched=loops,
+    )
+
+
+@rule
+def inherited_tests(profile: Profile) -> Iterator[dict[str, Any]]:
+    """Test classes that inherit tests from another class run them again: sometimes the point, sometimes not."""
+    bases: defaultdict[str, dict[str, Any]] = defaultdict(lambda: {"classes": set(), "methods": set(), "seconds": 0.0})
+    tests: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for test in profile.tests:
+        if origin := test.get("inherited_from"):
+            base, method = origin.rsplit(".", 1)
+            group = bases[base]
+            group["classes"].add((test["file"], test["class"]))
+            group["methods"].add(method)
+            group["seconds"] += test["duration"]
+            tests[base].append(test)
+    seconds = sum(group["seconds"] for group in bases.values())
+    if not worth_it(seconds, profile, 2.0, 0.01):
+        return
+    ranked = sorted(bases.items(), key=lambda item: -item[1]["seconds"])
+    count = sum(len(items) for items in tests.values())
+    pytest = runner(profile) == "pytest"
+    yield insight(
+        profile,
+        "inherited-tests",
+        "Test classes run the tests they inherit again",
+        category="test_code",
+        impact=seconds * 0.5,
+        summary=f"{count:,} tests run because their class inherits them from another class ({fmt(seconds)}), "
+        f"e.g. {len(ranked[0][1]['methods'])} tests of {ranked[0][0]} in "
+        f"{classes(len(ranked[0][1]['classes']))}.",
+        fix="Check that each subclass needs every test it inherits: keep the tests that depend on what a subclass "
+        "changes in the base class, and move the rest to a class of their own so they run once. A base class "
+        "that only exists to be inherited shouldn't run on its own either: "
+        + (
+            "name it so pytest doesn't collect it (no Test prefix) or set __test__ = False on it, and "
+            "__test__ = True on the subclasses."
+            if pytest
+            else "make it a mixin that doesn't inherit from TestCase."
+        ),
+        safety="Running inherited tests in every subclass is often the point (the same tests against another "
+        "backend or configuration): only drop the runs that test nothing new.",
+        tests=[t["nodeid"] for t in sorted(tests[ranked[0][0]], key=lambda t: -t["duration"])][:MAX_TESTS],
+        evidence=[
+            f"{base}: {plural(len(group['methods']), 'test')} run again in "
+            f"{classes(len(group['classes']))}, {fmt(group['seconds'])}"
+            for base, group in ranked[:5]
+        ],
     )
 
 

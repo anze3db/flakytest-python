@@ -261,3 +261,19 @@ def test_a_garbage_collection_pause_is_a_one_off_from_where_it_allocated(tmp_pat
     gc = next(i for i in doc["insights"] if i["id"] == "gc")
     assert [location["location"] for location in gc["locations"]] == ["django/db/models/query.py:5"]
     assert "(2 here)" in gc["summary"]
+
+
+def test_inherited_tests(tmp_path):
+    """apps/mcp: three subclasses ran the 61 tests of their base class again, 27.6s."""
+    tests = []
+    for cls in ("TestSSE", "TestHTTP", "TestStdio"):
+        for i in range(3):
+            test = record(f"apps/mcp/tests.py::{cls}::test_{i}", call=1.0)
+            test["inherited_from"] = f"apps.mcp.tests.ToolChecks.test_{i}"
+            tests.append(test)
+    tests += [record(f"tests/test_{i}.py::test_other", call=1.0) for i in range(20)]
+    doc = build(tmp_path, tests, backend="none")
+    inherited = next(i for i in doc["insights"] if i["id"] == "inherited-tests")
+    assert inherited["summary"].startswith("9 tests run because their class inherits them from another class (9.0s)")
+    assert inherited["evidence"] == ["apps.mcp.tests.ToolChecks: 3 tests run again in 3 classes, 9.0s"]
+    assert "__test__ = False" in inherited["fix"]

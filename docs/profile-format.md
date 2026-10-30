@@ -155,6 +155,7 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       "key": "1f3a9c0d2b4e",             // sha1(nodeid)[:12], the marker key
       "file": "tests/test_orders.py",
       "class": "TestCheckout",           // null for module-level tests
+      "inherited_from": "shop.tests.CheckoutChecks.test_total",  // the test method's class, when it's another one
       "name": "test_checkout[eur]",
       "outcome": "passed",               // passed, failed, error, skipped, xfailed, xpassed
       "worker": null,                    // "gw0" … under pytest-xdist, "django-1" … under manage.py test --parallel

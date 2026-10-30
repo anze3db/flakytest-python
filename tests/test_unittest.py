@@ -259,3 +259,34 @@ def test_django_parallel(pytester):
     workers = {cls: {t["worker"] for t in tests.values() if t["class"] == cls} for cls in ("TestGroups", "TestOther")}
     assert all(len(names) == 1 for names in workers.values()), workers
     assert {name for names in workers.values() for name in names} <= {"django-1", "django-2"}
+
+
+INHERITED = """
+import unittest
+
+
+class Checks:
+    def test_shared(self):
+        pass
+
+
+class TestA(Checks, unittest.TestCase):
+    def test_own(self):
+        pass
+
+
+class TestB(TestA):
+    pass
+"""
+
+
+def test_unittest_records_inherited_tests(pytester):
+    pytester.makepyfile(test_things=INHERITED)
+    run_python(pytester, "-m", "unittest")
+    tests = {t["nodeid"]: t.get("inherited_from") for t in latest(pytester)["tests"]}
+    assert tests == {
+        "test_things.py::TestA::test_own": None,
+        "test_things.py::TestA::test_shared": "test_things.Checks.test_shared",
+        "test_things.py::TestB::test_own": "test_things.TestA.test_own",
+        "test_things.py::TestB::test_shared": "test_things.Checks.test_shared",
+    }

@@ -562,6 +562,7 @@ class PartBuilder:
             "key": test["key"],
             "file": test["file"],
             "class": test.get("class"),
+            **({"inherited_from": test["inherited_from"]} if test.get("inherited_from") else {}),
             "name": test["name"],
             "outcome": test["outcome"],
             "worker": test.get("worker"),
