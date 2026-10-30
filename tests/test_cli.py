@@ -118,8 +118,42 @@ def test_terminal_summary_compares_with_previous_run(project):
     old = runs.load_profile(runs.resolve_run(project, "previous"))
     new = runs.load_profile(runs.resolve_run(project, "latest"))
     line = text.versus(old, new)
-    assert line.startswith("vs previous run (20261001-000000-aaaaaa): 2.00s → 500ms (-1.50s, -75%)")
+    assert line.startswith(
+        "vs previous run (20261001-000000-aaaaaa; a different selection: 1 of these 2 tests were in it): "
+        "2.00s → 500ms (-1.50s, -75%)"
+    )
     assert "1 new" in line
+
+
+def twins(count, outcome):
+    return [record(f"tests/test_flags.py::test_flag[{i}]", call=0.1, outcome=outcome) for i in range(count)]
+
+
+def test_versus_counts_tests_that_ran_only_now(tmp_path):
+    """Parametrized twins that stopped being skipped: they make the run slower, and the summary says why."""
+    old = runs.load_profile(save_run(tmp_path, "20261001-000000-aaaaaa", twins(10, "skipped")))
+    new_tests = twins(10, "passed")
+    new_tests[9] = record("tests/test_flags.py::test_flag[9]", outcome="skipped")
+    new = runs.load_profile(save_run(tmp_path, "20261002-000000-bbbbbb", new_tests))
+    old["tests"][9]["outcome"] = "passed"
+    old["run"]["workers"], new["run"]["workers"] = 8, 2
+    line = text.versus(old, new)
+    assert line.startswith("vs previous run (20261001-000000-aaaaaa; 8 workers, now 2):")
+    assert "9 ran that were skipped before, 1 skipped that ran before" in line
+    assert "changed outcome" not in line
+    report = text.compare_report(old, new)
+    assert "Tests that ran: 1 → 9. Of the tests in both runs, 9 ran that were skipped before" in report
+
+
+def test_the_summary_compares_with_the_last_run_of_the_same_tests(tmp_path):
+    full = twins(10, "passed")
+    save_run(tmp_path, "20261001-000000-aaaaaa", full)
+    save_run(tmp_path, "20261002-000000-bbbbbb", full[:2])  # a few tests, rerun on their own
+    latest = save_run(tmp_path, "20261003-000000-cccccc", full)
+    previous = runs.previous_summary(latest, runs.load_profile(latest))
+    assert previous["run"]["id"] == "20261001-000000-aaaaaa"
+    only = save_run(tmp_path, "20261004-000000-dddddd", twins(1, "passed"))
+    assert runs.previous_summary(only, runs.load_profile(only))["run"]["id"] == "20261003-000000-cccccc"
 
 
 def test_flakytest_pytest_loads_the_plugin_for_pytest_and_its_workers(monkeypatch):

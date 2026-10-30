@@ -507,18 +507,10 @@ class Session:
         return {"python_version": list(sys.version_info[:2]), "runner": self.runner, **self.context, "django": django}
 
     def summary_lines(self) -> list[str]:
-        """The terminal summary, compared with the run before this one."""
+        """The terminal summary, compared with the latest earlier run of the same tests, else the run before."""
         if self.profile is None or self.report_path is None:
             return []
-        previous = None
-        earlier = sorted(
-            run
-            for run in self.run_dir.parent.iterdir()
-            if run.name < self.run_dir.name and (run / "profile.json").exists()
-        )
-        if earlier:
-            with contextlib.suppress(OSError, ValueError, KeyError):
-                previous = runs.load_summary(earlier[-1])
+        previous = runs.previous_summary(self.run_dir, self.profile)
         return text.terminal_summary(self.profile, self.report_path, self.upload_url, previous)
 
 

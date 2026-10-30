@@ -8,6 +8,7 @@ from typing import Any
 
 from flakytest.profiling.insights import own_time
 from flakytest.profiling.memory import mb
+from flakytest.report import runs
 from flakytest.report.tree import build_tree, fmt, hot_functions, render_tree
 
 CATEGORY_LABELS = {
@@ -117,16 +118,47 @@ def headline(profile: dict[str, Any]) -> str:
     )
 
 
+def ran(test: dict[str, Any]) -> bool:
+    return test["outcome"] != "skipped"
+
+
+def differences(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """How two runs differ in what they ran and how: their times compare only so far."""
+    notes = []
+    if not runs.same_selection(old, new):
+        in_both = len({t["nodeid"] for t in old["tests"]} & {t["nodeid"] for t in new["tests"]})
+        notes.append(f"a different selection: {in_both:,} of these {len(new['tests']):,} tests were in it")
+    before, now = old["run"].get("workers"), new["run"].get("workers")
+    if before and now and before != now:
+        notes.append(f"{plural(before, 'worker')}, now {now}")
+    return notes
+
+
+def skip_changes(old_tests: dict[str, dict[str, Any]], common: list[dict[str, Any]]) -> tuple[int, int]:
+    """How many of the tests in both runs ran that were skipped before, and were skipped that ran before."""
+    started = sum(1 for t in common if ran(t) and not ran(old_tests[t["nodeid"]]))
+    stopped = sum(1 for t in common if not ran(t) and ran(old_tests[t["nodeid"]]))
+    return started, stopped
+
+
 def versus(old: dict[str, Any], new: dict[str, Any]) -> str:
-    """One line comparing a run with the previous one: speed of the tests both ran, and lost tests."""
+    """One line comparing a run with the previous one: speed of the tests both ran, tests that ran or were skipped
+    only now, and how the runs differ."""
     old_tests = {t["nodeid"]: t for t in old["tests"]}
     common = [t for t in new["tests"] if t["nodeid"] in old_tests]
     if not common:
         return ""
-    before = sum(old_tests[t["nodeid"]]["duration"] for t in common)
-    after = sum(t["duration"] for t in common)
-    parts = [f"vs previous run ({old['run']['id']}): {fmt(before)} → {fmt(after)} ({_delta(after - before, before)})"]
-    changed = sum(1 for t in common if t["outcome"] != old_tests[t["nodeid"]]["outcome"])
+    both_ran = [t for t in common if ran(t) and ran(old_tests[t["nodeid"]])]
+    before = sum(old_tests[t["nodeid"]]["duration"] for t in both_ran)
+    after = sum(t["duration"] for t in both_ran)
+    previous = "; ".join([old["run"]["id"], *differences(old, new)])
+    parts = [f"vs previous run ({previous}): {fmt(before)} → {fmt(after)} ({_delta(after - before, before)})"]
+    started, stopped = skip_changes(old_tests, common)
+    if started:
+        parts.append(f"{started:,} ran that were skipped before")
+    if stopped:
+        parts.append(f"{stopped:,} skipped that ran before")
+    changed = sum(1 for t in both_ran if t["outcome"] != old_tests[t["nodeid"]]["outcome"])
     if changed:
         parts.append(f"{changed} changed outcome")
     if len(common) < len(new["tests"]):
@@ -547,13 +579,23 @@ def compare_report(old: dict[str, Any], new: dict[str, Any], *, top: int = 15) -
         f"After:  `{new['run']['id']}` · {headline(new)}",
         "",
     ]
+    if notes := differences(old, new):
+        out += [f"⚠ The runs differ ({'; '.join(notes)}), so their times compare only so far.", ""]
     common = old_tests.keys() & new_tests.keys()
-    old_time = sum(old_tests[n]["duration"] for n in common)
-    new_time = sum(new_tests[n]["duration"] for n in common)
+    both_ran = [n for n in common if ran(old_tests[n]) and ran(new_tests[n])]
+    old_time = sum(old_tests[n]["duration"] for n in both_ran)
+    new_time = sum(new_tests[n]["duration"] for n in both_ran)
     out.append(
-        f"Tests in both runs: {len(common)}, their time {fmt(old_time)} → {fmt(new_time)} "
+        f"Tests that ran in both runs: {len(both_ran)}, their time {fmt(old_time)} → {fmt(new_time)} "
         f"({_delta(new_time - old_time, old_time)}). Wall time {fmt(old['run']['duration'])} → "
         f"{fmt(new['run']['duration'])}."
+    )
+    started, stopped = skip_changes(old_tests, [new_tests[n] for n in common])
+    old_ran = sum(1 for t in old["tests"] if ran(t))
+    new_ran = sum(1 for t in new["tests"] if ran(t))
+    out.append(
+        f"Tests that ran: {old_ran:,} → {new_ran:,}. Of the tests in both runs, {started:,} ran that were skipped "
+        f"before and {stopped:,} were skipped that ran before."
     )
 
     removed = sorted(old_tests.keys() - new_tests.keys())

@@ -1,10 +1,14 @@
 """Where profiling runs live on disk: <rootdir>/.flakytest/runs/<run id>/profile.json."""
 
+import contextlib
 import json
 from pathlib import Path
 from typing import Any
 
 FLAKYTEST_DIR = ".flakytest"
+# Runs that have this share of their tests in common ran the same selection of tests
+SAME_SELECTION = 0.9
+PREVIOUS_RUNS = 5  # how many earlier runs to look through for one of the same tests, to compare with
 
 
 def runs_dir(root: Path) -> Path:
@@ -71,13 +75,37 @@ SUMMARY_FILE = "summary.json"
 def write_summary(profile: dict[str, Any], run_dir: Path) -> None:
     """What comparing with a later run needs, so it doesn't have to load the whole profile."""
     summary = {
-        "run": {key: profile["run"].get(key) for key in ("id", "started_at", "duration", "exit_status")},
+        "run": {key: profile["run"].get(key) for key in ("id", "started_at", "duration", "exit_status", "workers")},
         "tests": [
             {"nodeid": test["nodeid"], "duration": test["duration"], "outcome": test["outcome"]}
             for test in profile["tests"]
         ],
     }
     (run_dir / SUMMARY_FILE).write_text(json.dumps(summary, separators=(",", ":")))
+
+
+def same_selection(old: dict[str, Any], new: dict[str, Any]) -> bool:
+    old_ids = {t["nodeid"] for t in old["tests"]}
+    new_ids = {t["nodeid"] for t in new["tests"]}
+    return len(old_ids & new_ids) >= SAME_SELECTION * max(len(old_ids), len(new_ids), 1)
+
+
+def previous_summary(run_dir: Path, profile: dict[str, Any]) -> dict[str, Any] | None:
+    """The summary of the latest earlier run of the same tests, else of the run before (a full run after a few
+    tests, or the other way round, says little about speed)."""
+    earlier = sorted(
+        (run for run in run_dir.parent.iterdir() if run.name < run_dir.name and (run / "profile.json").exists()),
+        reverse=True,
+    )
+    previous = None
+    for run in earlier[:PREVIOUS_RUNS]:
+        with contextlib.suppress(OSError, ValueError, KeyError):
+            summary = load_summary(run)
+            if previous is None:
+                previous = summary
+            if same_selection(summary, profile):
+                return summary
+    return previous
 
 
 def load_summary(run_dir: Path) -> dict[str, Any]:
