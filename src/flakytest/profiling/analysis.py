@@ -57,6 +57,11 @@ SUITE_MIN_SHARE = 0.0002
 WARMUP_MIN = 0.5
 WARMUP_FACTOR = 10
 WARMUP_IMPORTS_MIN = 0.05
+# A sampler that stopped writing this much before its process stopped it (seconds, or share of the run) stopped early
+STOPPED_EARLY = 5.0
+STOPPED_EARLY_SHARE = 0.1
+# The session timeline can't add up to more than the processes' wall clock: allow for rounding and clock skew
+TIMELINE_SLACK = 1.1
 
 # Hooks that tell where an unmarked sample was taken, checked from the leaf up
 TIMELINE_HOOKS = {
@@ -326,9 +331,18 @@ class PartBuilder:
                 key = (parsed[1] or "") if parsed else ""
                 if parsed and parsed[0] in PHASES and key in by_key:
                     threads.setdefault(key, {}).setdefault(parsed[0], []).append((node, count, thread))
+        sampled_seconds = process.get("sampled_seconds") or 0.0
+        stopped_at = None
+        if samples is not None and samples.seconds is not None and sampled_seconds:
+            # A sampler that stopped early (it thought the process was gone, or was killed) only stands for the time
+            # it sampled. A worker that crashed took its sampler down with it: that's reported as the crash.
+            early = sampled_seconds - max(STOPPED_EARLY, STOPPED_EARLY_SHARE * sampled_seconds)
+            if samples.seconds < early and not process.get("crashed"):
+                stopped_at = samples.seconds
+            sampled_seconds = min(sampled_seconds, samples.seconds)
         seconds_per_sample = 1 / process["rate"] if process.get("rate") else 0.0
-        if total and process.get("sampled_seconds"):
-            seconds_per_sample = process["sampled_seconds"] / total
+        if total and sampled_seconds:
+            seconds_per_sample = sampled_seconds / total
 
         kept = self._kept(tests)
         output_tests = [
@@ -350,6 +364,8 @@ class PartBuilder:
             "samples": total,
             "sample_errors": samples.failed if samples is not None else 0,
             "samples_complete": samples.complete if samples is not None else True,
+            "sampler_stopped_at": r(stopped_at) if stopped_at is not None else None,
+            "sampled_seconds": r(process.get("sampled_seconds") or 0.0),
             "frames": out.frames,
             "stacks": out.nodes,
             "stack_categories": {str(k): v for k, v in out.categories.items()},
@@ -647,6 +663,7 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     matched: dict[str, Matched] = defaultdict(Matched)
     total_samples = sample_errors = 0
     incomplete = []
+    stopped: list[tuple[str, float, float]] = []  # (worker, stopped at, sampled seconds) of samplers that stopped early
     for part in parts:
         frame_ids = []
         for frame in part["frames"]:
@@ -695,6 +712,14 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
         sample_errors += part["sample_errors"]
         if part["backend"] != "none" and not part.get("samples_complete", True):
             incomplete.append(part.get("worker") or "main")
+        if part.get("sampler_stopped_at") is not None:
+            stopped.append((part.get("worker") or "main", part["sampler_stopped_at"], part["sampled_seconds"]))
+
+    sampled_parts = sum(1 for part in parts if part["backend"] != "none" and part.get("pid") is not None)
+    timeline_fits = sum(timeline.values()) <= TIMELINE_SLACK * run["duration"] * max(1, sampled_parts)
+    if not timeline_fits:  # the startup and import times would be wrong, and so would insights built on them
+        timeline.clear()
+        imports.clear()
 
     summary = _summary(tests, timeline)
     source = next((p["memory_source"] for p in parts if p.get("tests") and p.get("memory_source")), None)
@@ -708,7 +733,15 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
     }
     run["profiler"]["samples"] = total_samples
     run["profiler"]["sample_errors"] = sample_errors
-    warnings = _warnings(tests, run, total_samples)
+    warnings = _warnings(tests, run, total_samples, stopped)
+    if not timeline_fits:
+        warnings.append(
+            {
+                "code": "timeline_unreliable",
+                "message": "The sampled startup and collection times add up to more than the run took, so they're "
+                "left out of the report.",
+            }
+        )
     if growth := memory.growth_warning(summary["memory"], tests):
         warnings.append(growth)
     if incomplete:
@@ -793,7 +826,9 @@ def rerun_command(runner: str, rate: int, nodeids: list[str]) -> str:
     return f"flakytest python --flakytest-rate {rate} {command} {names}"
 
 
-def _warnings(tests: list[dict[str, Any]], run: dict[str, Any], total_samples: int) -> list[dict[str, Any]]:
+def _warnings(
+    tests: list[dict[str, Any]], run: dict[str, Any], total_samples: int, stopped: list[tuple[str, float, float]]
+) -> list[dict[str, Any]]:
     profiler = run["profiler"]
     if profiler["backend"] == "none":
         return [
@@ -812,6 +847,32 @@ def _warnings(tests: list[dict[str, Any]], run: dict[str, Any], total_samples: i
             }
         )
         return warnings
+    stopped_message = ""
+    if stopped:
+        workers = ", ".join(worker for worker, _, _ in stopped)
+        at = max(at for _, at, _ in stopped)
+        of = max(seconds for _, _, seconds in stopped)
+        stopped_message = f"the profiler of {workers} stopped {_seconds(at)} into the run (of {_seconds(of)})"
+    if tests and not any(sum(t["samples"].values()) for t in tests):
+        profiler["failed"] = True
+        because = f": {stopped_message}" if stopped else ""
+        warnings.append(
+            {
+                "code": "sampling_failed",
+                "message": f"Sampling failed: {profiler['backend']} took {total_samples:,} samples, but none while a "
+                f"test ran{because}. Durations, fixture times, queries and memory are exact; there is no breakdown "
+                "of where time goes inside tests.",
+            }
+        )
+        return warnings
+    if stopped:
+        warnings.append(
+            {
+                "code": "sampler_stopped",
+                "message": f"{stopped_message[0].upper()}{stopped_message[1:]}, so the tests after that have no "
+                "samples. Their durations, fixture times, queries and memory are exact.",
+            }
+        )
     rate = profiler["rate"]
     interval = 1 / rate if rate else 0.001
     test_time = sum(t["duration"] for t in tests) or 1.0

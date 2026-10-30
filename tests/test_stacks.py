@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -74,3 +77,12 @@ def test_tachyon_sampler_starts_over_when_its_stacks_pile_up(tmp_path, monkeypat
     samples = read_samples(path)
     assert paths(samples) == sorted((stack, 2) for stack in expected)
     assert len(samples.frames) > len(set(samples.frames))  # it forgot the frames it had written
+
+
+def test_tachyon_sampler_knows_when_its_process_is_gone_without_proc(monkeypatch):
+    tachyon_sampler = pytest.importorskip("flakytest.profiling.tachyon_sampler")  # Python 3.15+
+    finished = subprocess.Popen([sys.executable, "-c", "pass"])
+    finished.wait()
+    monkeypatch.setattr(os.path, "isdir", lambda path: False)  # macOS has no /proc
+    assert not tachyon_sampler.gone(os.getpid())
+    assert tachyon_sampler.gone(finished.pid)

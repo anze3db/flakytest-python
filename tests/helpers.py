@@ -40,9 +40,9 @@ def phase_stack(nodeid, phase, *frames):
     return (*ROOT_FRAMES, marker, FROM_CALL, *frames)
 
 
-def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True):
+def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True, seconds=None):
     """A tachyon_sampler file. stacks: the main thread's [(frames from the root, count)]; threads: other threads'
-    [(main thread's marker frame, thread id, frames from the root, count)]."""
+    [(main thread's marker frame, thread id, frames from the root, count)]; seconds: how long the sampler sampled."""
     path = path.with_suffix(".jsonl")
     frame_ids: dict = {}
     node_ids: dict = {}
@@ -65,6 +65,8 @@ def write_tachyon_samples(path: Path, stacks, threads=(), *, done=True):
     line = {"frames": [list(f) for f in frame_ids], "nodes": nodes, "main": main, "threads": other, "failed": 0}
     if done:
         line["done"] = True
+    if seconds is not None:
+        line["seconds"] = seconds
     path.write_text(json.dumps(line) + "\n")
     return path
 

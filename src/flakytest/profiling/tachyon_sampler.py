@@ -13,7 +13,8 @@ ids (the reader doesn't mind seeing a frame or stack twice). Each line is
      "nodes": [[parent node or -1, frame], ...],      # new stack nodes, likewise
      "main": [[node, weight], ...],                   # the main thread's samples since the last line
      "threads": [[marker frame, thread id, node, weight], ...],
-     "failed": 3}
+     "failed": 3,
+     "seconds": 12.5}                                 # how long it has been sampling
 
 Other threads are sampled while the main thread isn't running Python (waiting on a thread pool, a lock or I/O),
 and tied to the test phase the main thread is in at that instant by the main thread's marker frame. The last line
@@ -73,6 +74,7 @@ class StackWriter:
         self.failed = 0
         self.samples = 0
         self.flushed_at = time.monotonic()
+        self.started = time.perf_counter()
 
     def frame_id(self, frame) -> tuple[int, bool]:
         entry = self.by_object.get(id(frame))
@@ -146,6 +148,7 @@ class StackWriter:
             "main": list(self.main.items()),
             "threads": [[*key, weight] for key, weight in self.threads.items()],
             "failed": self.failed,
+            "seconds": round(time.perf_counter() - self.started, 3),
             **extra,
         }
         self.file.write(json.dumps(line, separators=(",", ":")) + "\n")
@@ -196,20 +199,22 @@ def main_thread_of(snapshot):
 
 
 def gone(pid: int) -> bool:
-    """Whether the process exited (or is a zombie)."""
-    try:
-        with open(f"/proc/{pid}/stat", "rb") as f:
-            return f.read().rsplit(b")", 1)[1].split()[0] == b"Z"
-    except FileNotFoundError:
-        return True
-    except (OSError, IndexError):
+    """Whether the process exited (or, where there's /proc, is a zombie)."""
+    if os.path.isdir("/proc/self"):
         try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                return f.read().rsplit(b")", 1)[1].split()[0] == b"Z"
+        except FileNotFoundError:
             return True
-        except OSError:
-            return False
+        except (OSError, IndexError):
+            pass
+    try:  # macOS has no /proc
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
         return False
+    return False
 
 
 def sample(pid: int, main_unwinder, all_unwinder, *, writer: StackWriter, control: Control, unit_usec: int) -> None:
@@ -293,7 +298,6 @@ def main() -> int:
         all_unwinder = None
     writer = StackWriter(Path(args.out))
     Path(args.ready).write_text(json.dumps({"ok": True, "pid": os.getpid()}))
-    started = time.perf_counter()
     with contextlib.suppress(KeyboardInterrupt):
         sample(
             args.pid,
@@ -304,8 +308,8 @@ def main() -> int:
             unit_usec=interval_usec,
         )
     with contextlib.suppress(KeyboardInterrupt):
-        writer.flush(done=True, samples=writer.samples, seconds=time.perf_counter() - started)
-    sys.stdout.write(f"sampled {writer.samples} samples in {time.perf_counter() - started:.2f}s\n")
+        writer.flush(done=True, samples=writer.samples)
+    sys.stdout.write(f"sampled {writer.samples} samples in {time.perf_counter() - writer.started:.2f}s\n")
     return 0
 
 

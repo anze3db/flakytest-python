@@ -393,6 +393,7 @@ class Session:
         if meta.get("sampled_seconds") is not None and meta.get("status") == "running":
             meta["sampled_seconds"] = max(0.0, time.time() - meta["started_at"])
         process = meta | {
+            "crashed": True,
             "tests": [t for t in tests.values() if "key" in t],
             "fixture_users": {},
             "fixture_stats": [],

@@ -89,7 +89,11 @@ class Tools:
         tests = [t for t in profile["tests"] if filter in t["nodeid"]]
         rows = sorted(tests, key=lambda t: -t["duration"])[:limit]
         lines = ["| Test | Time | Outcome | Why |", "|---|---:|---|---|"]
-        lines += [f"| `{t['nodeid']}` | {text.fmt(t['duration'])} | {t['outcome']} | {text.why(t)} |" for t in rows]
+        sampled = text.was_sampled(profile)
+        lines += [
+            f"| `{t['nodeid']}` | {text.fmt(t['duration'])} | {t['outcome']} | {text.why(t, sampled=sampled)} |"
+            for t in rows
+        ]
         return "\n".join(lines)
 
     def compare_runs(self, old: str | None = None, new: str | None = None) -> str:

@@ -176,7 +176,7 @@ def agent_summary(profile: dict[str, Any], top: int = 15, query: str | None = No
                 "outcome": t["outcome"],
                 "duration": t["duration"],
                 "phases": t["phases"],
-                "why": text.why(t),
+                "why": text.why(t, sampled=text.was_sampled(profile)),
                 "categories": t["categories"],
                 "segments": t["segments"][:5],
                 "hot_lines": [line(h) for h in t["hot_lines"][:5]],

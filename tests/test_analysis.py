@@ -3,6 +3,7 @@ import json
 import pytest
 
 from flakytest.profiling.analysis import build_profile, rerun_command
+from flakytest.report import text
 from tests.helpers import phase_stack, process, record, run_info, write_tachyon_samples
 
 SLOW = "tests/test_orders.py::TestOrders::test_checkout"
@@ -82,6 +83,42 @@ def test_summary_timeline_and_warnings(profile):
     warning = next(w for w in profile["warnings"] if w["code"] == "undersampled")
     assert warning["tests"] == [FAST]
     assert warning["recommended_rate"] >= 2000
+
+
+STARTUP = (("/venv/bin/pytest", "<module>", 8), ("/x/_pytest/main.py", "pytest_sessionstart", 1))
+
+
+def test_a_sampler_that_stopped_early_stands_only_for_the_time_it_sampled(tmp_path):
+    """macOS: the sampler took pytest for gone 2s in, and the rest of the 300s run went unsampled. Its startup
+    samples are 2s of startup, not 300s."""
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", [(STARTUP, 2000)], seconds=2.0)
+    tests = [record(SLOW, call=150.0), record(FAST, call=140.0)]
+    doc = build_profile(run_info(duration=300.0), [process(tests, samples, sampled_seconds=300.0)], tmp_path, {})
+    assert doc["summary"]["timeline"] == {"startup": pytest.approx(2.0)}
+    assert doc["run"]["profiler"]["failed"]
+    (warning,) = doc["warnings"]
+    assert warning["code"] == "sampling_failed"
+    assert "stopped 2.0s into the run (of 300.0s)" in warning["message"]
+    assert "sampling failed" in text.headline(doc)
+    assert text.why(doc["tests"][0], sampled=text.was_sampled(doc)) == "call 2.5m"
+
+
+def test_a_sampler_that_stopped_after_some_tests(tmp_path):
+    stacks = [(STARTUP, 1000), (phase_stack(SLOW, "call"), 1000)]
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", stacks, seconds=2.0)
+    tests = [record(SLOW, call=1.0), record(FAST, call=200.0)]
+    doc = build_profile(run_info(duration=300.0), [process(tests, samples, sampled_seconds=300.0)], tmp_path, {})
+    assert doc["summary"]["timeline"] == {"startup": pytest.approx(1.0), "tests": pytest.approx(1.0)}
+    assert not doc["run"]["profiler"].get("failed")
+    assert doc["warnings"][0]["code"] == "sampler_stopped"
+
+
+def test_a_timeline_longer_than_the_run_is_left_out(tmp_path):
+    samples = write_tachyon_samples(tmp_path / "samples-1.json", [(STARTUP, 10), (phase_stack(FAST, "call"), 10)])
+    tests = [record(FAST, call=1.0)]
+    doc = build_profile(run_info(duration=5.0), [process(tests, samples, sampled_seconds=60.0)], tmp_path, {})
+    assert doc["summary"]["timeline"] == {}
+    assert "timeline_unreliable" in [w["code"] for w in doc["warnings"]]
 
 
 def test_profile_without_profiler(tmp_path):

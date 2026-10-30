@@ -54,10 +54,14 @@ def top_category(test: dict[str, Any]) -> tuple[str, float]:
     return max(categories.items(), key=lambda kv: kv[1])
 
 
-def why(test: dict[str, Any]) -> str:
-    """One line: what a test's time is mostly spent on."""
-    category, seconds = top_category(test)
-    parts = [f"{label(category)} {pct(seconds, test['duration'])}"]
+def why(test: dict[str, Any], *, sampled: bool = True) -> str:
+    """One line: what a test's time is mostly spent on. sampled: False when sampling failed for the whole run, so
+    "not sampled" would only repeat that."""
+    if sampled:
+        category, seconds = top_category(test)
+        parts = [f"{label(category)} {pct(seconds, test['duration'])}"]
+    else:
+        parts = [f"{phase} {fmt(seconds)}" for phase, seconds in test["phases"].items() if seconds]
     if test["segments"]:
         segment = test["segments"][0]
         parts.append(f"{segment['label']} in {segment['phase']} {fmt(segment['seconds'])}")
@@ -72,6 +76,11 @@ def why(test: dict[str, Any]) -> str:
     if one_off := one_off_note(test):
         parts.append(one_off)
     return ", ".join(parts)
+
+
+def was_sampled(profile: dict[str, Any]) -> bool:
+    """False when sampling failed for the whole run."""
+    return not profile["run"]["profiler"].get("failed")
 
 
 def plural(count: int, word: str) -> str:
@@ -100,6 +109,8 @@ def headline(profile: dict[str, Any]) -> str:
         if profiler["backend"] != "none"
         else "no sampling profiler"
     )
+    if profiler.get("failed"):
+        sampling = f"{profiler['backend']} sampling failed"
     return (
         f"{summary['tests']} tests in {fmt(run['duration'])} (test time {fmt(summary['test_time'])}) · "
         f"{run['environment']['name']} · Python {run['python']['version']} · {sampling}"
@@ -217,13 +228,14 @@ def terminal_summary(
     lines = [headline(profile)]
     if previous is not None and (line := versus(previous, profile)):
         lines.append(line)
+    sampled = was_sampled(profile)
     categories = [(k, v) for k, v in summary["categories"].items() if v / (total or 1) >= 0.02][:6]
-    if categories:
+    if categories and sampled:
         lines.append("Time goes to: " + " · ".join(f"{label(k)} {pct(v, total)}" for k, v in categories))
     slow = slowest(profile["tests"], 5)
     if slow:
         lines.append("Slowest tests:")
-        lines.extend(f"  {fmt(t['duration']):>7}  {t['nodeid']}  ({why(t)})" for t in slow)
+        lines.extend(f"  {fmt(t['duration']):>7}  {t['nodeid']}  ({why(t, sampled=sampled)})" for t in slow)
     if profile["insights"]:
         lines.append("Fix next:")
         for number, item in enumerate(profile["insights"][:3], 1):
@@ -300,7 +312,7 @@ def markdown_report(profile: dict[str, Any], *, top: int = 15) -> str:
         p = test["phases"]
         out.append(
             f"| `{test['nodeid']}` | {fmt(test['duration'])} | {fmt(p['setup'])} / {fmt(p['call'])} / "
-            f"{fmt(p['teardown'])} | {why(test)} |"
+            f"{fmt(p['teardown'])} | {why(test, sampled=was_sampled(profile))} |"
         )
 
     out += one_off_markdown(profile, top)
@@ -455,7 +467,7 @@ def test_report(profile: dict[str, Any], query: str, *, min_share: float = 0.02)
         out.append(f"{len(tests)} tests, {fmt(duration)} in total.")
         out += ["", "| Test | Time | Why |", "|---|---:|---|"]
         out += [
-            f"| `{t['nodeid']}` | {fmt(t['duration'])} | {why(t)} |"
+            f"| `{t['nodeid']}` | {fmt(t['duration'])} | {why(t, sampled=was_sampled(profile))} |"
             for t in sorted(tests, key=lambda t: -t["duration"])[:20]
         ]
 

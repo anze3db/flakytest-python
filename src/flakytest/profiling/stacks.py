@@ -24,6 +24,7 @@ class Samples:
     threads: Counter[tuple[int, int, int]] = field(default_factory=Counter)
     failed: int = 0
     complete: bool = False  # the sampler finished writing (False after a crash)
+    seconds: float | None = None  # how long the sampler sampled, up to its last write (tachyon only)
 
 
 def read_samples(path: Path) -> Samples:
@@ -48,6 +49,7 @@ def _read_tachyon(path: Path) -> Samples:
                 samples.threads[(marker, thread, node)] += weight
             samples.failed += line.get("failed", 0)
             samples.complete = samples.complete or bool(line.get("done"))
+            samples.seconds = line.get("seconds", samples.seconds)
     return samples
 
 
