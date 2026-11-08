@@ -960,7 +960,10 @@ def parallelism(profile: Profile) -> Iterator[dict[str, Any]]:
 def coverage(profile: Profile) -> Iterator[dict[str, Any]]:
     pytest = profile.context.get("pytest") or {}
     python = tuple(profile.context.get("python_version") or (0, 0))
-    if pytest.get("cov") and (3, 12) <= python < (3, 14) and not pytest.get("coverage_core"):
+    # coverage.py's sysmon core doesn't record which test ran each line (contexts): it warns, and keeps only the first
+    # test's context
+    contexts = pytest.get("coverage_contexts")
+    if pytest.get("cov") and (3, 12) <= python < (3, 14) and not pytest.get("coverage_core") and not contexts:
         yield insight(
             profile,
             "coverage-sysmon",

@@ -211,6 +211,7 @@ class ProfilerPlugin:
                 "xdist_installed": importlib.util.find_spec("xdist") is not None,
                 "cov": pm.has_plugin("_cov"),
                 "coverage_core": os.environ.get("COVERAGE_CORE"),
+                "coverage_contexts": _coverage_contexts(self.config),
                 "testpaths": _testpaths(self.config),
             },
         }
@@ -222,6 +223,19 @@ class ProfilerPlugin:
         terminalreporter.write_sep("=", "flakytest profile", cyan=True)
         for line in lines:
             terminalreporter.write_line(line)
+
+
+def _coverage_contexts(config: pytest.Config) -> bool:
+    """Whether coverage records which test ran each line: pytest-cov's --cov-context, or dynamic_context in
+    coverage's configuration."""
+    if _option(config, "cov_context"):
+        return True
+    controller = getattr(config.pluginmanager.get_plugin("_cov"), "cov_controller", None)
+    coverage = getattr(controller, "cov", None)
+    try:
+        return bool(coverage.get_option("run:dynamic_context")) if coverage is not None else False
+    except Exception:  # coverage's API changed: assume no contexts, as before
+        return False
 
 
 def _option(config: pytest.Config, name: str) -> Any:

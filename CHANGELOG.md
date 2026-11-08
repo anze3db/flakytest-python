@@ -26,6 +26,8 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 - Memory read back from swap (a long GC pause scans the whole heap) no longer counts as memory a test needed and kept.
 - New insight: test classes that run the tests they inherit again (3 subclasses × 61 tests).
 - Django tests count the connections they open, and the db-connections insight only appears when they open some.
+- coverage-sysmon is no longer suggested when coverage records which test ran each line (`--cov-context`,
+  `dynamic_context`): coverage.py's sysmon core keeps only the first test's context.
 
 ## [2026.0b3](https://github.com/anze3db/flakytest-python/releases/tag/2026.0b3) - 2026-10-30
 

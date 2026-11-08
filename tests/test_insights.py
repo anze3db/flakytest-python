@@ -293,3 +293,11 @@ def test_db_connections_only_when_django_tests_connected(tmp_path, connections):
         assert "1 test opened 3 new connections" in found[0]["summary"]
     else:
         assert not found
+
+
+@pytest.mark.parametrize("contexts", [False, True])
+def test_coverage_sysmon_unless_coverage_records_contexts(tmp_path, contexts):
+    """coverage.py's sysmon core keeps only the first test's context: --cov-context data would be wrong."""
+    context = {"python_version": [3, 12], "pytest": {"cov": True, "coverage_contexts": contexts}}
+    doc = build(tmp_path, [record("tests/test_a.py::test_a", call=1.0)], context=context, backend="none")
+    assert ("coverage-sysmon" in ids(doc)) is not contexts
