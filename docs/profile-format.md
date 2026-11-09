@@ -158,6 +158,10 @@ didn't record from pytest's reports (exact duration and outcome only). The `miss
       "file": "tests/test_orders.py",
       "class": "TestCheckout",           // null for module-level tests
       "inherited_from": "shop.tests.CheckoutChecks.test_total",  // the test method's class, when it's another one
+      // only for a test that repeats another: collected_twice (the same test under another node id, e.g. a test
+      // class imported into another module), same_params (a parametrize case with another case's values) or
+      // same_code (the same code as another test, found in the test files' source)
+      "duplicate": {"kind": "same_code", "of": "tests/test_orders.py::TestCheckout::test_checkout_copy"},
       "name": "test_checkout[eur]",
       "outcome": "passed",               // passed, failed, error, skipped, xfailed, xpassed
       "worker": null,                    // "gw0" … under pytest-xdist, "django-1" … under manage.py test --parallel

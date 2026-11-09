@@ -19,8 +19,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from flakytest.profiling import duplicates, insights, memory
 from flakytest.profiling import fixtures as fixture_stats
-from flakytest.profiling import insights, memory
 from flakytest.profiling.frames import (
     CATEGORY_ORDER,
     NO_STATE,
@@ -567,6 +567,7 @@ class PartBuilder:
             "file": test["file"],
             "class": test.get("class"),
             **({"inherited_from": test["inherited_from"]} if test.get("inherited_from") else {}),
+            **({"duplicate": test["duplicate"]} if test.get("duplicate") else {}),
             "name": test["name"],
             "outcome": test["outcome"],
             "worker": test.get("worker"),
@@ -799,6 +800,8 @@ def _merge(run: dict[str, Any], parts: list[dict[str, Any]], rootdir: Path, cont
                 "breakdowns of its last tests are missing; their timings are exact.",
             }
         )
+    if rootdir is not None:
+        duplicates.mark_same_code(tests, rootdir)
     doc = {
         "format": FORMAT,
         "version": VERSION,

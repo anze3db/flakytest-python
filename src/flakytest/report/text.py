@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from flakytest.profiling.duplicates import COLLECTED_TWICE, SAME_CODE, SAME_PARAMS
 from flakytest.profiling.insights import own_time
 from flakytest.profiling.memory import mb
 from flakytest.report import runs
@@ -252,6 +253,11 @@ def memory_markdown(profile: dict[str, Any], top: int) -> list[str]:
     return out
 
 
+DUPLICATES = {
+    COLLECTED_TWICE: "the same test runs again as",
+    SAME_PARAMS: "the same parameters as",
+    SAME_CODE: "the same code as",
+}
 RERUN = {
     "pytest": "flakytest pytest <tests>",
     "django": "flakytest python manage.py test <tests>",
@@ -494,6 +500,8 @@ def test_report(profile: dict[str, Any], query: str, *, min_share: float = 0.02)
             )
         if one_off := one_off_note(test):
             out.append(f"One-off: {one_off.split(': ', 1)[1]} ({fmt(test['warmup']['seconds'])}).")
+        if duplicate := test.get("duplicate"):
+            out.append(f"Duplicate: {DUPLICATES[duplicate['kind']]} `{duplicate['of']}`.")
         if threads := test.get("threads"):
             work = ", ".join(f"{label(k)} {fmt(v)}" for k, v in threads["categories"].items())
             out.append(

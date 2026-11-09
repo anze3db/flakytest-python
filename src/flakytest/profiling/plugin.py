@@ -18,6 +18,7 @@ from typing import Any
 import pluggy
 import pytest
 
+from flakytest.profiling.duplicates import collected_twice
 from flakytest.profiling.samplers import BACKENDS
 from flakytest.profiling.session import (
     BUSY_PY_SPY_RATE,
@@ -121,11 +122,14 @@ class ProfilerPlugin:
             workers=int(os.environ.get("PYTEST_XDIST_WORKER_COUNT") or 0),
         )
 
+        self.duplicates: dict[str, dict[str, str]] = {}  # tests that repeat another test (see duplicates.py)
+
     def start(self) -> None:
         self.session.start()
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         self.session.collected(len(session.items))
+        self.duplicates = collected_twice(session.items)
 
     @pytest.hookimpl(**WRAPPER)  # type: ignore[call-overload]
     def pytest_runtest_protocol(self, item: pytest.Item):
@@ -138,6 +142,8 @@ class ProfilerPlugin:
             getattr(item, "name", nodeid.rsplit("::", 1)[-1]),
             inherited_from(cls, getattr(item, "function", None)),
         )
+        if (duplicate := self.duplicates.get(nodeid)) is not None:
+            record["duplicate"] = duplicate
         self.session.fixture_users.update(getattr(item, "fixturenames", ()))
         try:
             return (yield)

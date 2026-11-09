@@ -3,6 +3,7 @@ import json
 import pytest
 
 from flakytest.profiling.samplers import choose_backend
+from flakytest.report import text
 from tests.helpers import PROFILE
 
 SUITE = """
@@ -114,3 +115,57 @@ class TestChild(TestBase):
         "test_suite.py::TestBase::test_shared": None,
         "test_suite.py::TestChild::test_shared": "test_suite.TestBase.test_shared",
     }
+
+
+def test_profile_finds_duplicate_tests(pytester):
+    pytester.makepyfile(
+        test_orders="""
+import pytest
+
+class TestOrders:
+    def test_total(self):
+        assert 1 + 1 == 2
+
+@pytest.mark.parametrize("currency", ["eur", "usd", "eur"])
+def test_price(currency):
+    assert currency
+
+def test_model_copy():
+    \"\"\"Copies the model with model_copy().\"\"\"
+    model = {"a": 1}
+    copied = model.copy()
+    assert copied == model
+
+def test_dunder_copy():
+    data = {"a": 1}
+    other = data.copy()
+    assert other == data
+""",
+        test_api="""
+from test_orders import TestOrders
+
+def test_api():
+    pass
+""",
+    )
+    pytester.runpytest_subprocess(*PROFILE, "--flakytest-backend", "none").assert_outcomes(passed=8)
+    _, profile = latest_profile(pytester)
+    duplicates = {t["nodeid"]: t["duplicate"] for t in profile["tests"] if t.get("duplicate")}
+    assert duplicates == {
+        "test_api.py::TestOrders::test_total": {
+            "kind": "collected_twice",
+            "of": "test_orders.py::TestOrders::test_total",
+        },
+        "test_orders.py::test_price[eur1]": {"kind": "same_params", "of": "test_orders.py::test_price[eur0]"},
+        "test_orders.py::test_model_copy": {"kind": "same_code", "of": "test_orders.py::test_dunder_copy"},
+    }
+    insights = {i["id"]: i for i in profile["insights"]}
+    assert insights["duplicate-tests"]["summary"].startswith(
+        "1 test runs again under another name, e.g. test_api.py runs tests of test_orders.py and 1 parametrize case "
+        "repeats another case's values"
+    )
+    assert insights["copied-tests"]["evidence"] == [
+        "test_orders.py::test_model_copy = test_orders.py::test_dunder_copy"
+    ]
+    report = text.test_report(profile, "test_orders.py::test_model_copy")
+    assert "Duplicate: the same code as `test_orders.py::test_dunder_copy`." in report

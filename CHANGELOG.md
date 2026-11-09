@@ -26,6 +26,11 @@ prepared (see [RELEASING.md](https://github.com/anze3db/flakytest-python/blob/ma
 - Memory read back from swap (a long GC pause scans the whole heap) no longer counts as memory a test needed and kept.
 - New insight: test classes that run the tests they inherit again (3 subclasses × 61 tests).
 - Django tests count the connections they open, and the db-connections insight only appears when they open some.
+- New insight: tests that run twice, because a test class or function imported into another test module runs there
+  too, or because a parametrize case repeats another case's values.
+- New insight: tests with the same code as another test. That's usually a copy-paste mistake: a copy whose name says
+  it tests something its code doesn't (pydantic's `test_model_copy` never calls `model_copy()`). Found from the test
+  files' source: 16 such tests in Django's 18,000, in 3 seconds.
 - coverage-sysmon is no longer suggested when coverage records which test ran each line (`--cov-context`,
   `dynamic_context`): coverage.py's sysmon core keeps only the first test's context.
 

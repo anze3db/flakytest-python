@@ -4,11 +4,12 @@ Every rule reads the profile document (and a little context the plugin gathers, 
 estimates how many seconds per run the problem costs, and explains the fix and how to keep it safe.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from flakytest.profiling.duplicates import COLLECTED_TWICE, SAME_CODE, SAME_PARAMS
 from flakytest.profiling.frames import source_line
 from flakytest.profiling.matchers import Matched
 
@@ -1119,6 +1120,69 @@ def inherited_tests(profile: Profile) -> Iterator[dict[str, Any]]:
             f"{classes(len(group['classes']))}, {fmt(group['seconds'])}"
             for base, group in ranked[:5]
         ],
+    )
+
+
+@rule
+def duplicate_tests(profile: Profile) -> Iterator[dict[str, Any]]:
+    """Tests that run again: collected under a second node id, or a parametrize case repeating another's values."""
+    repeats = [t for t in profile.tests if (t.get("duplicate") or {}).get("kind") in (COLLECTED_TWICE, SAME_PARAMS)]
+    if not repeats:
+        return
+    seconds = sum(t["duration"] for t in repeats)
+    twice = [t for t in repeats if t["duplicate"]["kind"] == COLLECTED_TWICE]
+    cases = len(repeats) - len(twice)
+    parts = []
+    if twice:
+        imports = Counter((t["file"], t["duplicate"]["of"].partition("::")[0]) for t in twice)
+        (into, source), _ = imports.most_common(1)[0]
+        runs = "runs" if len(twice) == 1 else "run"
+        parts.append(
+            f"{plural(len(twice), 'test')} {runs} again under another name, e.g. {into} runs tests of {source}"
+        )
+    if cases:
+        parts.append(
+            f"{plural(cases, 'parametrize case')} {'repeats' if cases == 1 else 'repeat'} another case's values"
+        )
+    yield insight(
+        profile,
+        "duplicate-tests",
+        "Tests run twice",
+        category="test_code",
+        impact=seconds,
+        summary=f"{' and '.join(parts)} ({fmt(seconds)}).",
+        fix="A test class or function imported into another test module runs there too: import the module instead "
+        "(from tests import test_orders) or move what you share to a helper or conftest.py. Drop parametrize cases "
+        "that repeat another case's values.",
+        safety="These are the same test with the same parameters: removing the repeat loses nothing.",
+        tests=[t["nodeid"] for t in sorted(repeats, key=lambda t: -t["duration"])][:MAX_TESTS],
+        evidence=[f"{t['nodeid']} repeats {t['duplicate']['of']}" for t in repeats[:10]],
+    )
+
+
+@rule
+def copied_tests(profile: Profile) -> Iterator[dict[str, Any]]:
+    """Tests with the same code as another test: a copy whose name says it tests something its code doesn't."""
+    copies = [t for t in profile.tests if (t.get("duplicate") or {}).get("kind") == SAME_CODE]
+    if not copies:
+        return
+    seconds = sum(t["duration"] for t in copies)
+    first = copies[0]
+    yield insight(
+        profile,
+        "copied-tests",
+        "Tests have the same code as another test",
+        category="test_code",
+        impact=seconds,
+        summary=f"{plural(len(copies), 'test')} {'has' if len(copies) == 1 else 'have'} the same code as another test, "
+        f"e.g. {first['nodeid']} and "
+        f"{first['duplicate']['of']}. That's usually a copy whose name says it tests something its code doesn't.",
+        fix="Make each copy test what its name says (the method, input or setting it's named after), or delete it "
+        "if the other test already covers that.",
+        safety="Some copies are on purpose, like a test run again to check that nothing leaks from the tests before "
+        "it: keep those, with a comment that says so.",
+        tests=[t["nodeid"] for t in copies][:MAX_TESTS],
+        evidence=[f"{t['nodeid']} = {t['duplicate']['of']}" for t in copies[:10]],
     )
 
 
