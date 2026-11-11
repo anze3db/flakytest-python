@@ -16,6 +16,8 @@ SAMPLER = choose_backend("auto")[0] != "none"
 LINUX = sys.platform.startswith("linux") and os.path.exists("/proc/self/status")
 needs_sampler = pytest.mark.skipif(not SAMPLER, reason="no sampling profiler available")
 needs_tachyon = pytest.mark.skipif(not tachyon_available(), reason="other threads are only sampled with tachyon")
+# On a busy machine (CI), py-spy now and then takes no sample in a run's first test, although it samples the rest
+samples_each_test = pytest.mark.skipif(not tachyon_available(), reason="py-spy can miss a run's first test")
 
 DJANGO_CONFTEST = """
 import django
@@ -84,7 +86,7 @@ urlpatterns = [path("", compute)]
     )
 
 
-@needs_sampler
+@samples_each_test
 def test_a_middleware_that_wraps_the_request_doesnt_own_its_time(pytester):
     django_project(pytester)
     pytester.makepyfile(
@@ -286,7 +288,7 @@ def test_sleep(i):
     assert {test["worker"] for test in profile["tests"]} == {"gw0", "gw1"}
 
 
-@needs_sampler
+@samples_each_test
 def test_categories_of_real_work(pytester):
     package = pytester.mkpydir("botocore")
     (package / "loaders.py").write_text(

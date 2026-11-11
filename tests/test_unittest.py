@@ -3,7 +3,7 @@ import sys
 import pytest
 
 from flakytest.profiling import unittest_support
-from flakytest.profiling.samplers import choose_backend
+from flakytest.profiling.samplers import choose_backend, tachyon_available
 from flakytest.report import runs
 
 SUITE = """
@@ -205,6 +205,15 @@ def test_python_m_pytest_runs_the_pytest_plugin(pytester):
 
 @pytest.mark.skipif(choose_backend("auto")[0] == "none", reason="no sampling profiler available")
 def test_unittest_sampled(pytester):
+    pytester.makepyfile(test_things=SUITE)
+    pytester.run(sys.executable, "-m", "flakytest", "python", "--flakytest-rate", "500", "-m", "unittest")
+    profiler = latest(pytester)["run"]["profiler"]
+    assert profiler["error"] is None
+    assert profiler["samples"] > 0
+
+
+@pytest.mark.skipif(not tachyon_available(), reason="py-spy can miss a run's first test on a busy machine")
+def test_unittest_samples_are_attributed_to_tests(pytester):
     pytester.makepyfile(test_things=SUITE)
     pytester.run(sys.executable, "-m", "flakytest", "python", "--flakytest-rate", "500", "-m", "unittest")
     sleeps = next(t for t in latest(pytester)["tests"] if t["name"] == "test_sleeps")

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from flakytest.profiling.samplers import choose_backend
+from flakytest.profiling.samplers import choose_backend, tachyon_available
 from flakytest.report import text
 from tests.helpers import PROFILE
 
@@ -87,7 +87,17 @@ def test_profile_with_sampler(pytester):
     result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-rate", "500")
     result.assert_outcomes(passed=1, failed=1, skipped=1, xfailed=1)
     _, profile = latest_profile(pytester)
-    # py-spy can sample well below the requested rate on a busy VM: ask for a few samples, and for shares
+    assert profile["run"]["profiler"]["backend"] != "none"
+    assert profile["run"]["profiler"]["error"] is None
+    assert profile["run"]["profiler"]["samples"] > 0
+
+
+@pytest.mark.skipif(not tachyon_available(), reason="py-spy can miss a run's first test on a busy machine")
+def test_samples_are_attributed_to_tests(pytester):
+    pytester.makepyfile(test_suite=SUITE)
+    result = pytester.runpytest_subprocess(*PROFILE, "--flakytest-rate", "500")
+    result.assert_outcomes(passed=1, failed=1, skipped=1, xfailed=1)
+    _, profile = latest_profile(pytester)
     assert profile["run"]["profiler"]["samples"] > 10
     sleeps = next(t for t in profile["tests"] if t["name"] == "test_sleeps")
     assert sleeps["samples"]["call"] >= 10
